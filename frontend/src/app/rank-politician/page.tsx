@@ -225,11 +225,10 @@ export default function RankPoliticianPage() {
                                 Rank Politician
                             </h1>
                             <p className={muted}>
-                                Ranks how focused public X posts are on each person&apos;s assigned
-                                department portfolio only (e.g. PM counts as Personnel / Atomic / Space —
-                                not everything). After scrape, posts are classified with an LLM (Bedrock
-                                Kimi K2.5) so birthday wishes mentioning a state are not scored as
-                                portfolio work. Ranked by net score. Auto-scrape runs daily in batches.
+                                Union Cabinet ministers only (incl. PM) — scored on assigned departments.
+                                Posts are LLM-classified after scrape. Firecrawl credits are guarded:
+                                low balance pauses scraping so failed calls do not waste credits.
+                                Ranked by net score.
                             </p>
                         </div>
                         <div className="flex flex-wrap gap-2">

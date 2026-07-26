@@ -16,7 +16,59 @@ const STATUS_URL_RE =
     /https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/([A-Za-z0-9_]+)\/status\/(\d+)/i;
 
 const FIRECRAWL_API_URL = 'https://api.firecrawl.dev/v2/scrape';
+const FIRECRAWL_CREDITS_URL = 'https://api.firecrawl.dev/v2/team/credit-usage';
 const DEFAULT_TIMEOUT_MS = 45000;
+
+export class FirecrawlCreditError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'FirecrawlCreditError';
+    }
+}
+
+export function isFirecrawlCreditError(error: unknown): boolean {
+    if (error instanceof FirecrawlCreditError) return true;
+    const message = String((error as any)?.message || error || '').toLowerCase();
+    return message.includes('insufficient credits') || message.includes('not enough credits');
+}
+
+export interface FirecrawlCreditUsage {
+    remainingCredits: number;
+    planCredits?: number;
+    billingPeriodStart?: string;
+    billingPeriodEnd?: string;
+}
+
+/** Read remaining Firecrawl credits before spending any scrape calls. */
+export async function getFirecrawlCreditUsage(
+    apiKey: string = process.env.FIRECRAWL_API_KEY || ''
+): Promise<FirecrawlCreditUsage | null> {
+    if (!apiKey) return null;
+
+    try {
+        const response = await fetch(FIRECRAWL_CREDITS_URL, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+            cache: 'no-store',
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.success === false) return null;
+
+        const data = payload?.data || {};
+        const remaining = Number(data.remainingCredits);
+        if (!Number.isFinite(remaining)) return null;
+
+        return {
+            remainingCredits: remaining,
+            planCredits: Number.isFinite(Number(data.planCredits))
+                ? Number(data.planCredits)
+                : undefined,
+            billingPeriodStart: data.billingPeriodStart,
+            billingPeriodEnd: data.billingPeriodEnd,
+        };
+    } catch {
+        return null;
+    }
+}
 
 function cleanPostText(text: string): string {
     return text
@@ -220,11 +272,18 @@ export async function scrapeXProfileWithFirecrawl(
                 payload?.error ||
                 payload?.message ||
                 `Firecrawl scrape failed (${response.status})`;
+            if (/insufficient credits|not enough credits/i.test(String(message))) {
+                throw new FirecrawlCreditError(String(message));
+            }
             throw new Error(message);
         }
 
         if (payload?.success === false) {
-            throw new Error(payload?.error || 'Firecrawl returned success=false');
+            const message = payload?.error || 'Firecrawl returned success=false';
+            if (/insufficient credits|not enough credits/i.test(String(message))) {
+                throw new FirecrawlCreditError(String(message));
+            }
+            throw new Error(message);
         }
 
         const data = payload?.data || {};

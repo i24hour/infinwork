@@ -39,7 +39,22 @@ export async function GET(request: NextRequest) {
             processed: result.processed,
             successCount: result.successCount,
             errorCount: result.errorCount,
+            creditGuardTriggered: result.creditGuardTriggered,
+            creditsRemaining: result.creditsRemaining,
         });
+
+        // Fail loud when credits are exhausted so GitHub Actions does not look "green"
+        // while every scrape is burning empty calls.
+        if (result.creditGuardTriggered) {
+            return NextResponse.json(
+                {
+                    status: 'error',
+                    message: 'Firecrawl credit guard triggered — scraping paused',
+                    ...result,
+                },
+                { status: 402 }
+            );
+        }
 
         return NextResponse.json({
             status: 'ok',

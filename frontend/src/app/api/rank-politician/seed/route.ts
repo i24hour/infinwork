@@ -2,7 +2,11 @@ import { NextResponse } from 'next/server';
 import { requireAdminSession } from '@/lib/admin';
 import connectDB from '@/lib/mongodb';
 import Politician from '@/models/Politician';
-import { POLITICIAN_SEEDS, toPoliticianDocument } from '@/lib/rank-politician/seed';
+import {
+    CABINET_MINISTER_COUNT,
+    POLITICIAN_SEEDS,
+    toPoliticianDocument,
+} from '@/lib/rank-politician/seed';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,6 +21,7 @@ export async function POST() {
 
         let upserted = 0;
         const results: Array<{ slug: string; status: string }> = [];
+        const activeSlugs = POLITICIAN_SEEDS.map((s) => s.slug);
 
         for (const seed of POLITICIAN_SEEDS) {
             const doc = toPoliticianDocument(seed);
@@ -44,12 +49,22 @@ export async function POST() {
             results.push({ slug: doc.slug, status: 'upserted' });
         }
 
-        const total = await Politician.countDocuments({ isActive: true });
+        // Rank Politician is cabinet-only for now — deactivate everyone else.
+        const deactivateResult = await Politician.updateMany(
+            { slug: { $nin: activeSlugs } },
+            { $set: { isActive: false } }
+        );
+
+        const totalActive = await Politician.countDocuments({ isActive: true });
+        const totalInactive = await Politician.countDocuments({ isActive: false });
 
         return NextResponse.json({
-            message: `Seeded ${upserted} politicians`,
+            message: `Seeded ${upserted} cabinet ministers; deactivated ${deactivateResult.modifiedCount} non-cabinet profiles`,
             upserted,
-            totalActive: total,
+            deactivated: deactivateResult.modifiedCount,
+            cabinetTarget: CABINET_MINISTER_COUNT,
+            totalActive,
+            totalInactive,
             results,
         });
     } catch (error: any) {

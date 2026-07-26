@@ -10,7 +10,7 @@ on:
       limit:
         description: 'Politicians to scrape in this run'
         required: false
-        default: '15'
+        default: '8'
 
 jobs:
   scrape:
@@ -21,7 +21,8 @@ jobs:
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           CRON_URL: ${{ secrets.RANK_POLITICIAN_CRON_URL }}
-          LIMIT: ${{ github.event.inputs.limit || '15' }}
+          # Small batches — credit guard + ~30 cabinet ministers only.
+          LIMIT: ${{ github.event.inputs.limit || '8' }}
         run: |
           set -euo pipefail
 
