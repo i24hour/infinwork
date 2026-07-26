@@ -107,12 +107,13 @@ export async function classifyPostWithLlm(
     const reason =
         typeof parsed?.reason === 'string' && parsed.reason.trim()
             ? parsed.reason.trim().slice(0, 280)
-            : 'LLM classification';
+            : 'Classified from post content';
 
     return {
         category,
         score: CATEGORY_POINTS[category],
-        scoreReason: `LLM: ${reason}`,
+        // Keep public-facing reasons vendor-neutral (implementation details live in code).
+        scoreReason: reason,
         scoredBy: 'llm',
     };
 }

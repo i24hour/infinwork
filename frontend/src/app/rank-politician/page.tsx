@@ -225,10 +225,8 @@ export default function RankPoliticianPage() {
                                 Rank Politician
                             </h1>
                             <p className={muted}>
-                                Union Cabinet ministers only (incl. PM) — scored on assigned departments.
-                                Posts are LLM-classified after scrape. Firecrawl credits are guarded:
-                                low balance pauses scraping so failed calls do not waste credits.
-                                Ranked by net score.
+                                Union Cabinet ministers only (incl. PM), ranked by how focused their
+                                public posts are on assigned departments. Ranked by net score.
                             </p>
                         </div>
                         <div className="flex flex-wrap gap-2">

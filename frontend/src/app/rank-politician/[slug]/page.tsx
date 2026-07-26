@@ -10,6 +10,8 @@ import {
     categoryClass,
     categoryLabel,
     formatRelativeTime,
+    publicScoreReason,
+    publicScrapeError,
     scrapeStatusClass,
     scrapeStatusLabel,
 } from '@/lib/rank-politician/ui';
@@ -259,9 +261,10 @@ export default function RankPoliticianDetailPage() {
                                 </div>
                             )}
 
-                            {politician.lastScrapeStatus === 'error' && politician.lastScrapeError && (
+                            {politician.lastScrapeStatus === 'error' &&
+                                publicScrapeError(politician.lastScrapeError) && (
                                 <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-                                    Last scrape error: {politician.lastScrapeError}
+                                    Last scrape error: {publicScrapeError(politician.lastScrapeError)}
                                 </div>
                             )}
 
@@ -419,8 +422,10 @@ export default function RankPoliticianDetailPage() {
                                             <p className={`text-sm whitespace-pre-wrap ${isLightTheme ? 'text-zinc-800' : 'text-zinc-200'}`}>
                                                 {post.text}
                                             </p>
-                                            {post.scoreReason && (
-                                                <p className={`text-xs ${muted}`}>{post.scoreReason}</p>
+                                            {publicScoreReason(post.scoreReason) && (
+                                                <p className={`text-xs ${muted}`}>
+                                                    {publicScoreReason(post.scoreReason)}
+                                                </p>
                                             )}
                                             {post.postUrl && (
                                                 <a

@@ -112,7 +112,7 @@ async function classifyCandidate(
             return {
                 category: 'unknown',
                 score: 0,
-                scoreReason: `LLM failed, left unscored: ${String(error?.message || error).slice(0, 180)}`,
+                scoreReason: 'Could not classify this post automatically',
                 scoredBy: 'fallback',
             };
         }

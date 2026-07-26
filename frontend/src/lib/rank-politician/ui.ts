@@ -72,3 +72,34 @@ export function formatRelativeTime(value?: string | Date | null): string {
     if (days < 14) return `${days}d ago`;
     return date.toLocaleDateString();
 }
+
+/**
+ * Public UI copy should stay vendor-neutral.
+ * Implementation details (models, providers) live in the open-source code.
+ */
+export function publicScoreReason(reason?: string | null): string | null {
+    if (!reason) return null;
+    let text = reason.trim();
+    text = text.replace(/^LLM\s*:\s*/i, '');
+    text = text.replace(/^LLM failed,\s*/i, '');
+    text = text.replace(/\b(bedrock|kimi(?:\s*k\.?\s*2\.5)?|litellm|openai|firecrawl)\b/gi, '');
+    text = text.replace(/\s{2,}/g, ' ').trim();
+    return text || null;
+}
+
+export function publicScrapeError(error?: string | null): string | null {
+    if (!error) return null;
+    const lower = error.toLowerCase();
+    if (lower.includes('insufficient credits') || lower.includes('not enough credits')) {
+        return 'Scraping temporarily paused. Please try again later.';
+    }
+    if (lower.includes('firecrawl') || lower.includes('credit guard')) {
+        return 'Scraping failed. Please try again later.';
+    }
+    // Strip vendor names from any remaining message shown on-site.
+    let text = error
+        .replace(/\b(bedrock|kimi(?:\s*k\.?\s*2\.5)?|litellm|openai|firecrawl)\b/gi, 'service')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+    return text.slice(0, 220) || 'Scraping failed. Please try again later.';
+}
