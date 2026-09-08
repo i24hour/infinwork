@@ -180,7 +180,12 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
     };
 
     const activeTasksCount = useMemo(() => tasks.filter((task) => task.enabled && !task.completed && !task.cancelledAt).length, [tasks]);
-    const pendingTasks = useMemo(() => tasks.filter((task) => task.enabled && !task.completed && !task.cancelledAt), [tasks]);
+    const pendingTasks = useMemo(
+        () => tasks
+            .filter((task) => !task.completed && !task.cancelledAt)
+            .sort((a, b) => Number(b.enabled) - Number(a.enabled)),
+        [tasks]
+    );
     const completedTasks = useMemo(() => tasks.filter((task) => task.completed), [tasks]);
     const liveScore = useMemo(
         () => getScoreAtTime(tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory),
@@ -306,8 +311,15 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
                                 >
                                     <div className="flex items-start justify-between gap-2">
                                         <div className="flex-1 min-w-0">
-                                            <div className="text-sm font-semibold text-white mb-1">
-                                                {task.title}
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <div className="text-sm font-semibold text-white">
+                                                    {task.title}
+                                                </div>
+                                                {!task.enabled && (
+                                                    <span className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-400">
+                                                        Paused
+                                                    </span>
+                                                )}
                                             </div>
                                             {task.description && (
                                                 <div className="text-xs text-zinc-400">

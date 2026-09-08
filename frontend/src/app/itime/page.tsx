@@ -6,7 +6,7 @@ import { useSession, signIn, signOut } from 'next-auth/react';
 import Image from 'next/image';
 import dynamic from 'next/dynamic';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
-import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } from '@/lib/score';
+import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot, type FocusPointsSnapshot } from '@/lib/score';
 
 const PerformanceChart = dynamic(
     () => import('@/components/PerformanceChart').then(mod => mod.PerformanceChart),
@@ -78,9 +78,13 @@ export default function ITimePage() {
 
     const playAlertSound = () => {
         try {
-            const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-            if (!AudioContext) return;
-            const ctx = new AudioContext();
+            const browserWindow = window as Window & {
+                AudioContext?: typeof AudioContext;
+                webkitAudioContext?: typeof AudioContext;
+            };
+            const AudioContextConstructor = browserWindow.AudioContext || browserWindow.webkitAudioContext;
+            if (!AudioContextConstructor) return;
+            const ctx = new AudioContextConstructor();
             const osc = ctx.createOscillator();
             const gainNode = ctx.createGain();
             osc.connect(gainNode);
@@ -106,10 +110,12 @@ export default function ITimePage() {
             try {
                 const response = await fetch('/api/itime');
                 if (response.ok) {
-                    const data = await response.json();
-                    setTasks(data.tasks.map((t: any) => ({
-                        ...t,
-                        id: t._id,
+                    const data = await response.json() as {
+                        tasks?: Array<Omit<ITimeTask, 'id'> & { id?: string }>;
+                    };
+                    setTasks((data.tasks ?? []).map((task) => ({
+                        ...task,
+                        id: task._id ?? task.id ?? '',
                     })));
 
                     // If user has a specific image in their session/tasks, we can handle it here if needed
@@ -138,6 +144,9 @@ export default function ITimePage() {
     const [githubPointsHistory, setGithubPointsHistory] = useState<GithubPointsSnapshot[] | null>(null);
     const [chainPoints, setChainPoints] = useState(0);
     const [chainPointsHistory, setChainPointsHistory] = useState<ChainPointsSnapshot[] | null>(null);
+    const [focusScore, setFocusScore] = useState(0);
+    const [focusBonusPoints, setFocusBonusPoints] = useState(0);
+    const [focusPointsHistory, setFocusPointsHistory] = useState<FocusPointsSnapshot[] | null>(null);
 
     const fetchUserProfile = useCallback(async () => {
         try {
@@ -153,6 +162,11 @@ export default function ITimePage() {
             setGithubPointsHistory(Array.isArray(data.githubPointsHistory) ? data.githubPointsHistory : null);
             setChainPoints(data.chainPoints || 0);
             setChainPointsHistory(Array.isArray(data.chainPointsHistory) ? data.chainPointsHistory : null);
+            setFocusScore(data.focusScore || 0);
+            setFocusBonusPoints(data.focusBonusPoints || 0);
+            setFocusPointsHistory(Array.isArray(data.focusScoreHistory)
+                ? data.focusScoreHistory.map((entry: { timestamp: Date | string | number; bonusPoints: number }) => ({ timestamp: entry.timestamp, points: entry.bonusPoints }))
+                : null);
         } catch (err) {
             console.error('Error fetching profile:', err);
         } finally {
@@ -172,6 +186,9 @@ export default function ITimePage() {
             setGithubPointsHistory(null);
             setChainPoints(0);
             setChainPointsHistory(null);
+            setFocusScore(0);
+            setFocusBonusPoints(0);
+            setFocusPointsHistory(null);
         }
         fetchTasks();
         if (status === 'authenticated' && session?.user?.email) {
@@ -564,13 +581,27 @@ export default function ITimePage() {
     const totalTime = useMemo(() => tasks.reduce((sum, task) => sum + getElapsedSeconds(task), 0), [tasks, getElapsedSeconds]);
     const liveScore = useMemo<number | null>(
         () => scoreReady
-            ? getScoreAtTime(tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory)
+            ? getScoreAtTime(tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory, focusScore, focusBonusPoints, focusPointsHistory)
             : null,
-        [scoreReady, tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory]
+        [scoreReady, tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory, focusScore, focusBonusPoints, focusPointsHistory]
     );
     const liveScoreColorClass = liveScore !== null && liveScore < 0 ? 'text-red-500' : 'text-[#4CAF50]';
     const activeTasks = useMemo(() => tasks.filter((task) => task.enabled && !task.completed && !task.cancelledAt).length, [tasks]);
-    const pendingTasks = useMemo(() => tasks.filter((task) => task.enabled && !task.completed && !task.cancelledAt), [tasks]);
+    const pendingTasks = useMemo(
+        () => tasks
+            .filter((task) => !task.completed && !task.cancelledAt)
+            .sort((a, b) => Number(b.enabled) - Number(a.enabled)),
+        [tasks]
+    );
+
+    useEffect(() => {
+        setSelectedTask((current) => {
+            if (!current) return current;
+            const latest = tasks.find((task) => task.id === current.id);
+            if (!latest || latest.completed || latest.cancelledAt) return null;
+            return latest;
+        });
+    }, [tasks]);
     const completedTasks = useMemo(() => {
         const getCompletedTimestamp = (task: ITimeTask): number => {
             if (typeof task.completedAt === 'number' && Number.isFinite(task.completedAt)) {
@@ -665,6 +696,14 @@ export default function ITimePage() {
                     </div>
                 </div>
 
+                <div className={`mb-8 rounded-2xl border p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
+                    <div>
+                        <div className={`text-sm ${isLightTheme ? 'text-zinc-700' : 'text-zinc-400'}`}>AI Focus Score</div>
+                        <div className="text-3xl font-bold text-emerald-400">{Math.round(focusScore)}<span className="text-sm text-zinc-500">/100</span></div>
+                    </div>
+                    <div className="text-sm text-zinc-500">Focus bonus currently adds <span className="text-blue-400 font-semibold">+{Math.round(focusBonusPoints)} points</span>. Configure monitoring in Settings.</div>
+                </div>
+
                 {/* Stats */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-8">
                     <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
@@ -708,6 +747,9 @@ export default function ITimePage() {
                             githubPointsHistory={githubPointsHistory}
                             chainPoints={chainPoints}
                             chainPointsHistory={chainPointsHistory}
+                            focusScore={focusScore}
+                            focusBonusPoints={focusBonusPoints}
+                            focusPointsHistory={focusPointsHistory}
                         />
                     ) : (
                         <div className={`h-[500px] rounded-2xl border p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
@@ -769,8 +811,15 @@ export default function ITimePage() {
                                 >
                                     <div className="flex items-start justify-between gap-2">
                                         <div className="flex-1 min-w-0">
-                                            <div className="text-sm font-semibold text-white mb-1">
-                                                {task.title}
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <div className="text-sm font-semibold text-white">
+                                                    {task.title}
+                                                </div>
+                                                {!task.enabled && (
+                                                    <span className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-400">
+                                                        Paused
+                                                    </span>
+                                                )}
                                             </div>
                                             {task.description && (
                                                 <div className="text-xs text-zinc-400">
@@ -980,9 +1029,16 @@ export default function ITimePage() {
                         <div className="max-w-7xl mx-auto px-4 md:px-8 py-4 md:py-6">
                             <div className="flex items-start justify-between gap-4">
                                 <div className="flex-1">
-                                    <h1 className="text-2xl md:text-4xl font-bold text-white mb-2 break-words">
-                                        {selectedTask.title}
-                                    </h1>
+                                    <div className="flex flex-wrap items-center gap-3 mb-2">
+                                        <h1 className="text-2xl md:text-4xl font-bold text-white break-words">
+                                            {selectedTask.title}
+                                        </h1>
+                                        {!selectedTask.enabled && !selectedTask.completed && (
+                                            <span className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wider text-amber-400">
+                                                Paused
+                                            </span>
+                                        )}
+                                    </div>
                                     {selectedTask.description && (
                                         <p className="text-zinc-400 text-sm md:text-lg">
                                             {selectedTask.description}
