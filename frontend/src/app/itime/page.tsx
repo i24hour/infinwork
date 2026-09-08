@@ -13,7 +13,7 @@ const PerformanceChart = dynamic(
     { ssr: false, loading: () => <div className="h-[500px] bg-black rounded-2xl border border-white/10 flex items-center justify-center text-zinc-500">Loading chart...</div> }
 );
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { LiveTimer, LiveTotalTimer } from '@/components/LiveTimer';
+import { LiveTimer, LiveTotalTimer, LivePauseCountdown } from '@/components/LiveTimer';
 
 interface ITimeTask {
     id: string;
@@ -821,8 +821,11 @@ export default function ITimePage() {
                                     </div>
 
                                     <div className="flex items-center justify-between pt-2 border-t border-white/10">
-                                        <div className={`text-2xl font-mono font-bold ${task.enabled ? 'text-white' : 'text-zinc-500'}`}>
-                                            <LiveTimer task={task} getElapsedSeconds={getElapsedSeconds} formatElapsed={formatElapsed} />
+                                        <div>
+                                            <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-0.5">Worked</div>
+                                            <div className="text-2xl font-mono font-bold text-white">
+                                                <LiveTimer task={task} getElapsedSeconds={getElapsedSeconds} formatElapsed={formatElapsed} />
+                                            </div>
                                         </div>
                                         <div className="flex gap-2 items-center">
                                             <LiquidButton
@@ -880,25 +883,18 @@ export default function ITimePage() {
                                                     </LiquidButton>
                                                 </div>
                                             ) : (
-                                                <div className="flex flex-col items-end gap-1">
-                                                    <LiquidButton
-                                                        size="sm"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            toggleTask(task.id);
-                                                            setShowPauseOptions(null);
-                                                        }}
-                                                        className="text-white transition-colors"
-                                                        title="Resume Timer"
-                                                    >
-                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                                    </LiquidButton>
-                                                    {task.autoResumeAt && (
-                                                        <span className="text-[10px] text-zinc-500 -mt-1 block">
-                                                            {new Date(task.autoResumeAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                        </span>
-                                                    )}
-                                                </div>
+                                                <LiquidButton
+                                                    size="sm"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        toggleTask(task.id);
+                                                        setShowPauseOptions(null);
+                                                    }}
+                                                    className="text-white transition-colors"
+                                                    title="Resume Timer"
+                                                >
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                                </LiquidButton>
                                             )}
                                             <LiquidButton
                                                 size="sm"
@@ -913,6 +909,9 @@ export default function ITimePage() {
                                             </LiquidButton>
                                         </div>
                                     </div>
+                                    {!task.enabled && (
+                                        <LivePauseCountdown autoResumeAt={task.autoResumeAt} compact />
+                                    )}
                                 </div>
                             ))}
                         </div>
@@ -1042,10 +1041,15 @@ export default function ITimePage() {
                                 {/* Timer Display */}
                                 <div className="bg-black  rounded-2xl border border-white/10 p-4 md:p-8 overflow-hidden">
                                     <div className="text-center">
-                                        <div className="text-xs md:text-sm text-zinc-400 mb-2 md:mb-4 uppercase tracking-wide">Current Time</div>
-                                        <div className={`text-6xl sm:text-7xl md:text-8xl font-mono font-bold mb-4 md:mb-8 tracking-tighter sm:tracking-normal ${selectedTask.enabled ? 'text-white' : 'text-zinc-500'}`}>
+                                        <div className="text-xs md:text-sm text-zinc-400 mb-2 md:mb-4 uppercase tracking-wide">Worked</div>
+                                        <div className="text-6xl sm:text-7xl md:text-8xl font-mono font-bold mb-4 md:mb-8 tracking-tighter sm:tracking-normal text-white">
                                             <LiveTimer task={selectedTask} getElapsedSeconds={getElapsedSeconds} formatElapsed={formatElapsed} />
                                         </div>
+                                        {!selectedTask.enabled && !selectedTask.completed && (
+                                            <div className="mx-auto mb-6 max-w-sm text-left">
+                                                <LivePauseCountdown autoResumeAt={selectedTask.autoResumeAt} />
+                                            </div>
+                                        )}
                                         <div className="flex flex-wrap gap-4 justify-center items-center">
                                             {selectedTask.enabled ? (
                                                 <div className="relative">
@@ -1080,22 +1084,15 @@ export default function ITimePage() {
                                                     </LiquidButton>
                                                 </div>
                                             ) : (
-                                                <div className="flex flex-col items-center gap-1 relative">
-                                                    <LiquidButton
-                                                        onClick={() => { toggleTask(selectedTask.id); setShowPauseOptions(null); }}
-                                                        className="w-40 text-base font-bold transition-all text-zinc-300"
-                                                    >
-                                                        <div className="flex items-center gap-2">
-                                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                                            <span>Resume</span>
-                                                        </div>
-                                                    </LiquidButton>
-                                                    {selectedTask.autoResumeAt && (
-                                                        <span className="text-xs text-zinc-500 absolute -bottom-5 w-max">
-                                                            Resumes at {new Date(selectedTask.autoResumeAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                        </span>
-                                                    )}
-                                                </div>
+                                                <LiquidButton
+                                                    onClick={() => { toggleTask(selectedTask.id); setShowPauseOptions(null); }}
+                                                    className="w-40 text-base font-bold transition-all text-white"
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                                        <span>Resume</span>
+                                                    </div>
+                                                </LiquidButton>
                                             )}
                                             <LiquidButton
                                                 onClick={() => {
