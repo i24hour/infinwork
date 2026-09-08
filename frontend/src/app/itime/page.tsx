@@ -6,7 +6,7 @@ import { useSession, signIn, signOut } from 'next-auth/react';
 import Image from 'next/image';
 import dynamic from 'next/dynamic';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
-import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot, type FocusPointsSnapshot } from '@/lib/score';
+import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } from '@/lib/score';
 
 const PerformanceChart = dynamic(
     () => import('@/components/PerformanceChart').then(mod => mod.PerformanceChart),
@@ -144,9 +144,6 @@ export default function ITimePage() {
     const [githubPointsHistory, setGithubPointsHistory] = useState<GithubPointsSnapshot[] | null>(null);
     const [chainPoints, setChainPoints] = useState(0);
     const [chainPointsHistory, setChainPointsHistory] = useState<ChainPointsSnapshot[] | null>(null);
-    const [focusScore, setFocusScore] = useState(0);
-    const [focusBonusPoints, setFocusBonusPoints] = useState(0);
-    const [focusPointsHistory, setFocusPointsHistory] = useState<FocusPointsSnapshot[] | null>(null);
 
     const fetchUserProfile = useCallback(async () => {
         try {
@@ -162,11 +159,6 @@ export default function ITimePage() {
             setGithubPointsHistory(Array.isArray(data.githubPointsHistory) ? data.githubPointsHistory : null);
             setChainPoints(data.chainPoints || 0);
             setChainPointsHistory(Array.isArray(data.chainPointsHistory) ? data.chainPointsHistory : null);
-            setFocusScore(data.focusScore || 0);
-            setFocusBonusPoints(data.focusBonusPoints || 0);
-            setFocusPointsHistory(Array.isArray(data.focusScoreHistory)
-                ? data.focusScoreHistory.map((entry: { timestamp: Date | string | number; bonusPoints: number }) => ({ timestamp: entry.timestamp, points: entry.bonusPoints }))
-                : null);
         } catch (err) {
             console.error('Error fetching profile:', err);
         } finally {
@@ -186,9 +178,6 @@ export default function ITimePage() {
             setGithubPointsHistory(null);
             setChainPoints(0);
             setChainPointsHistory(null);
-            setFocusScore(0);
-            setFocusBonusPoints(0);
-            setFocusPointsHistory(null);
         }
         fetchTasks();
         if (status === 'authenticated' && session?.user?.email) {
@@ -581,9 +570,9 @@ export default function ITimePage() {
     const totalTime = useMemo(() => tasks.reduce((sum, task) => sum + getElapsedSeconds(task), 0), [tasks, getElapsedSeconds]);
     const liveScore = useMemo<number | null>(
         () => scoreReady
-            ? getScoreAtTime(tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory, focusScore, focusBonusPoints, focusPointsHistory)
+            ? getScoreAtTime(tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory)
             : null,
-        [scoreReady, tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory, focusScore, focusBonusPoints, focusPointsHistory]
+        [scoreReady, tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory]
     );
     const liveScoreColorClass = liveScore !== null && liveScore < 0 ? 'text-red-500' : 'text-[#4CAF50]';
     const activeTasks = useMemo(() => tasks.filter((task) => task.enabled && !task.completed && !task.cancelledAt).length, [tasks]);
@@ -696,14 +685,6 @@ export default function ITimePage() {
                     </div>
                 </div>
 
-                <div className={`mb-8 rounded-2xl border p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
-                    <div>
-                        <div className={`text-sm ${isLightTheme ? 'text-zinc-700' : 'text-zinc-400'}`}>AI Focus Score</div>
-                        <div className="text-3xl font-bold text-emerald-400">{Math.round(focusScore)}<span className="text-sm text-zinc-500">/100</span></div>
-                    </div>
-                    <div className="text-sm text-zinc-500">Focus bonus currently adds <span className="text-blue-400 font-semibold">+{Math.round(focusBonusPoints)} points</span>. Configure monitoring in Settings.</div>
-                </div>
-
                 {/* Stats */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-8">
                     <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
@@ -747,9 +728,6 @@ export default function ITimePage() {
                             githubPointsHistory={githubPointsHistory}
                             chainPoints={chainPoints}
                             chainPointsHistory={chainPointsHistory}
-                            focusScore={focusScore}
-                            focusBonusPoints={focusBonusPoints}
-                            focusPointsHistory={focusPointsHistory}
                         />
                     ) : (
                         <div className={`h-[500px] rounded-2xl border p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
