@@ -6,9 +6,14 @@ import Chain from '@/models/IChain';
 import User from '@/models/User';
 import { enforceChainVisitWindow } from '@/lib/ichain';
 import { recomputeChainPointsForUsers } from '@/lib/chain-points';
+import { isAllowedExternalLink, isPlainObject, readJsonBody } from '@/lib/validate';
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const normalizeIdentifier = (value: string) => value.trim().toLowerCase();
+
+const MAX_CHAIN_NAME_LENGTH = 100;
+const MAX_CHAIN_MEMBERS = 50;
+const MAX_IDENTIFIER_LENGTH = 320;
 
 export const dynamic = 'force-dynamic';
 
@@ -66,11 +71,32 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const body = await request.json();
-        const { name, members: memberIdentifiers, whatsappLink } = body;
+        const parsed = await readJsonBody<unknown>(request);
+        if (!parsed.ok) {
+            return NextResponse.json({ error: parsed.error }, { status: 400 });
+        }
+        if (!isPlainObject(parsed.body)) {
+            return NextResponse.json({ error: 'Invalid chain payload' }, { status: 400 });
+        }
+        const { name, members: memberIdentifiers, whatsappLink } = parsed.body;
 
-        if (!name || !memberIdentifiers || !Array.isArray(memberIdentifiers)) {
-            return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+        if (typeof name !== 'string' || name.trim().length === 0) {
+            return NextResponse.json({ error: 'Chain name is required' }, { status: 400 });
+        }
+        if (name.trim().length > MAX_CHAIN_NAME_LENGTH) {
+            return NextResponse.json({ error: `Chain name must be at most ${MAX_CHAIN_NAME_LENGTH} characters` }, { status: 400 });
+        }
+        if (!Array.isArray(memberIdentifiers)) {
+            return NextResponse.json({ error: 'Members must be an array' }, { status: 400 });
+        }
+        if (memberIdentifiers.length > MAX_CHAIN_MEMBERS) {
+            return NextResponse.json({ error: `A chain can have at most ${MAX_CHAIN_MEMBERS} members` }, { status: 400 });
+        }
+        if (!memberIdentifiers.every((id): id is string => typeof id === 'string' && id.length <= MAX_IDENTIFIER_LENGTH)) {
+            return NextResponse.json({ error: 'Invalid member identifier' }, { status: 400 });
+        }
+        if (whatsappLink != null && whatsappLink !== '' && !isAllowedExternalLink(whatsappLink)) {
+            return NextResponse.json({ error: 'WhatsApp link must be a valid https:// URL' }, { status: 400 });
         }
 
         await connectDB();
@@ -131,8 +157,8 @@ export async function POST(request: NextRequest) {
         }));
 
         const chain = await Chain.create({
-            name,
-            whatsappLink,
+            name: name.trim(),
+            whatsappLink: typeof whatsappLink === 'string' ? whatsappLink.trim() : undefined,
             members,
             status: 'Idle',
             totalTime: 0,

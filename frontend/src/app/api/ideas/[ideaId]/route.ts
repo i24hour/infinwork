@@ -3,24 +3,36 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
 import Idea from '@/models/Idea';
+import Reply from '@/models/Reply';
+import { isValidObjectIdString } from '@/lib/validate';
 
 export const dynamic = 'force-dynamic';
 
 // GET /api/ideas/[ideaId]
-// Fetch a single idea by ID
+// Fetch a single idea by ID — private ideas are only visible to their owner
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ ideaId: string }> }
 ) {
     try {
+        const session = await getServerSession(authOptions);
         const { ideaId } = await params;
+
+        if (!isValidObjectIdString(ideaId)) {
+            return NextResponse.json({ error: 'Invalid idea ID' }, { status: 400 });
+        }
+
         await connectDB();
         const idea = await Idea.findById(ideaId).lean();
-        
+
         if (!idea) {
             return NextResponse.json({ error: 'Idea not found' }, { status: 404 });
         }
-        
+
+        if (!idea.isPublic && idea.createdBy !== session?.user?.email) {
+            return NextResponse.json({ error: 'Idea not found' }, { status: 404 });
+        }
+
         return NextResponse.json({ idea });
     } catch (error) {
         console.error('Error fetching idea:', error);
@@ -91,6 +103,7 @@ export async function DELETE(
         }
 
         await idea.deleteOne();
+        await Reply.deleteMany({ ideaId: idea._id });
 
         return NextResponse.json({ success: true });
     } catch (error) {
