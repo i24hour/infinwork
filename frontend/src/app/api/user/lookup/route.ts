@@ -3,8 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
 import User from '@/models/User';
-
-const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+import { normalizeUserId, userIdentifierQuery } from '@/lib/user-identity';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +15,7 @@ export async function GET(request: NextRequest) {
         }
 
         const { searchParams } = new URL(request.url);
-        const identifier = (searchParams.get('identifier') || '').trim().toLowerCase();
+        const identifier = normalizeUserId(searchParams.get('identifier'));
 
         if (!identifier) {
             return NextResponse.json({ exists: false, error: 'Identifier is required' }, { status: 400 });
@@ -24,12 +23,7 @@ export async function GET(request: NextRequest) {
 
         await connectDB();
 
-        const user = await User.findOne({
-            $or: [
-                { email: identifier },
-                { username: { $regex: `^${escapeRegex(identifier)}$`, $options: 'i' } }
-            ]
-        }).lean() as any;
+        const user = await User.findOne(userIdentifierQuery(identifier)).lean() as any;
 
         return NextResponse.json({
             exists: !!user,

@@ -7,6 +7,7 @@ import { Sidebar } from '@/components/Sidebar';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import { CreateChainModal } from '@/components/ichain/CreateChainModal';
 import { ChainCard } from '@/components/ichain/ChainCard';
+import { isUserOnChain } from '@/lib/user-identity';
 
 export default function IChainPage() {
     const { data: session } = useSession();
@@ -14,7 +15,8 @@ export default function IChainPage() {
     const [chains, setChains] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [activeTab, setActiveTab] = useState<'my' | 'all'>('my');
+    const [activeTab, setActiveTab] = useState<'my' | 'all'>('all');
+    const [allSort, setAllSort] = useState<'recent' | 'longest'>('recent');
 
     const formatTime = (seconds: number) => {
         const h = Math.floor(seconds / 3600);
@@ -61,14 +63,16 @@ export default function IChainPage() {
     }, []);
 
     const handleChainCreated = (newChain: any) => {
-        const updatedChains = [newChain, ...chains];
-        // Sort by maxTime (or totalTime for new chain)
-        updatedChains.sort((a, b) => (b.maxTime || b.totalTime || 0) - (a.maxTime || a.totalTime || 0));
-        setChains(updatedChains);
+        setChains((current) => {
+            const withoutDuplicate = current.filter((chain) => chain._id !== newChain._id);
+            return [newChain, ...withoutDuplicate];
+        });
+        setActiveTab('all');
+        setAllSort('recent');
     };
 
     const handleChainDeleted = (chainId: string) => {
-        setChains(chains.filter(c => c._id !== chainId));
+        setChains((current) => current.filter((c) => c._id !== chainId));
     };
 
     return (
@@ -90,27 +94,50 @@ export default function IChainPage() {
                         </LiquidButton>
                     </div>
 
-                    {/* Active Chains List */}
                     <div className="space-y-6">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                            <div className="flex items-center gap-3">
-                                <h2 className="text-xl font-semibold text-white">Active Chains</h2>
+                        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                            <div className="space-y-1">
+                                <h2 className="text-xl font-semibold text-white">
+                                    {activeTab === 'my' ? 'My Chains' : 'All Chains'}
+                                </h2>
+                                <p className="text-sm text-zinc-500">
+                                    {activeTab === 'my'
+                                        ? 'Chains you created or joined, including burst ones.'
+                                        : 'Every chain ever created, including new ones from other people.'}
+                                </p>
                             </div>
-                            
-                            {/* Tab Toggle */}
-                            <div className="flex bg-white/5 border border-white/10 rounded-full p-1 w-fit mt-2 sm:mt-0">
-                                <button
-                                    onClick={() => setActiveTab('my')}
-                                    className={`px-6 py-2 rounded-full text-sm font-medium transition-colors ${activeTab === 'my' ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}
-                                >
-                                    My Chains
-                                </button>
-                                <button
-                                    onClick={() => setActiveTab('all')}
-                                    className={`px-6 py-2 rounded-full text-sm font-medium transition-colors ${activeTab === 'all' ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}
-                                >
-                                    All Chains
-                                </button>
+
+                            <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                                {activeTab === 'all' && (
+                                    <div className="flex bg-white/5 border border-white/10 rounded-full p-1 w-fit">
+                                        <button
+                                            onClick={() => setAllSort('recent')}
+                                            className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${allSort === 'recent' ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}
+                                        >
+                                            Newest
+                                        </button>
+                                        <button
+                                            onClick={() => setAllSort('longest')}
+                                            className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${allSort === 'longest' ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}
+                                        >
+                                            Longest
+                                        </button>
+                                    </div>
+                                )}
+                                <div className="flex bg-white/5 border border-white/10 rounded-full p-1 w-fit">
+                                    <button
+                                        onClick={() => setActiveTab('my')}
+                                        className={`px-6 py-2 rounded-full text-sm font-medium transition-colors ${activeTab === 'my' ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}
+                                    >
+                                        My Chains
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveTab('all')}
+                                        className={`px-6 py-2 rounded-full text-sm font-medium transition-colors ${activeTab === 'all' ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}
+                                    >
+                                        All Chains
+                                    </button>
+                                </div>
                             </div>
                         </div>
                         
@@ -123,11 +150,24 @@ export default function IChainPage() {
                                 ))}
                             </div>
                         ) : (() => {
+                            const createdAtValue = (chain: any) => {
+                                const time = chain.createdAt ? new Date(chain.createdAt).getTime() : 0;
+                                return Number.isNaN(time) ? 0 : time;
+                            };
+                            const maxTimeValue = (chain: any) => chain.maxTime || chain.totalTime || 0;
+                            const isRecentChain = (chain: any) => Date.now() - createdAtValue(chain) < 72 * 60 * 60 * 1000;
+
                             const myChains = chains
-                                .filter(chain => (chain.members || []).some((m: any) => m.userId === session?.user?.email))
-                                .sort((a, b) => (b.createdAt ? new Date(b.createdAt).getTime() : 0) - (a.createdAt ? new Date(a.createdAt).getTime() : 0));
-                                
-                            const displayChains = activeTab === 'my' ? myChains : chains;
+                                .filter((chain) => isUserOnChain(chain, session?.user?.email))
+                                .sort((a, b) => createdAtValue(b) - createdAtValue(a));
+
+                            const allChains = [...chains].sort((a, b) => (
+                                allSort === 'longest'
+                                    ? maxTimeValue(b) - maxTimeValue(a)
+                                    : createdAtValue(b) - createdAtValue(a)
+                            ));
+
+                            const displayChains = activeTab === 'my' ? myChains : allChains;
 
                             if (displayChains.length === 0) {
                                 return (
@@ -165,6 +205,11 @@ export default function IChainPage() {
                                                 <div>
                                                     <div className="flex items-center gap-2">
                                                         <h3 className="text-xl font-bold text-white">{chain.name}</h3>
+                                                        {isRecentChain(chain) && (
+                                                            <span className="text-[10px] uppercase tracking-wider font-bold text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 px-2 py-0.5 rounded-full">
+                                                                New
+                                                            </span>
+                                                        )}
                                                         <button
                                                             onClick={(e) => {
                                                                 e.preventDefault();

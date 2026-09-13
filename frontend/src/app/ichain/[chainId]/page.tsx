@@ -8,6 +8,7 @@ import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { sameUserId } from '@/lib/user-identity';
 
 export default function ChainDetailPage({ params }: { params: Promise<{ chainId: string }> }) {
     const { chainId } = use(params);
@@ -90,7 +91,7 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
                     setChain((prevChain: any) => {
                         if (!prevChain) return prevChain;
                         const newMembers = prevChain.members.map((m: any) => {
-                            if (m.userId === session?.user?.email) {
+                            if (sameUserId(m.userId, session?.user?.email)) {
                                 return { ...m, image: base64String };
                             }
                             return m;
@@ -224,7 +225,7 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
         );
     }
 
-    const myMemberInfo = chain.members.find((m: any) => m.userId === session?.user?.email);
+    const myMemberInfo = chain.members.find((m: any) => sameUserId(m.userId, session?.user?.email));
     const formatTime = (seconds: number) => {
         const h = Math.floor(seconds / 3600);
         const m = Math.floor((seconds % 3600) / 60);
@@ -262,10 +263,10 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
             <ChainNode
                 key={node.userId}
                 member={node}
-                isCurrentUser={node.userId === session?.user?.email}
+                isCurrentUser={sameUserId(node.userId, session?.user?.email)}
                 onImageClick={() => fileInputRef.current?.click()}
                 onNodeClick={() => {
-                    if (node.userId !== session?.user?.email) {
+                    if (!sameUserId(node.userId, session?.user?.email)) {
                         router.push(`/workers/${encodeURIComponent(node.userId)}`);
                     }
                 }}
@@ -342,10 +343,10 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
                             
                             <ChainNode
                                 member={member}
-                                isCurrentUser={member.userId === session?.user?.email}
+                                isCurrentUser={sameUserId(member.userId, session?.user?.email)}
                                 onImageClick={() => fileInputRef.current?.click()}
                                 onNodeClick={() => {
-                                    if (member.userId !== session?.user?.email) {
+                                    if (!sameUserId(member.userId, session?.user?.email)) {
                                         router.push(`/workers/${encodeURIComponent(member.userId)}`);
                                     }
                                 }}
