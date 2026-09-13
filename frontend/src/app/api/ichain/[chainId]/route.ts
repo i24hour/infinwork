@@ -6,8 +6,7 @@ import Chain from '@/models/IChain';
 import User from '@/models/User';
 import { enforceChainVisitWindow } from '@/lib/ichain';
 import { recomputeChainPointsForUsers } from '@/lib/chain-points';
-
-const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+import { sameUserId, userIdentifierQuery } from '@/lib/user-identity';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,7 +34,7 @@ export async function GET(
         }
 
         if (session?.user?.email && chainDoc?.members) {
-            const visitingMember = chainDoc.members.find((member: any) => member.userId === session.user?.email);
+            const visitingMember = chainDoc.members.find((member: any) => sameUserId(member.userId, session.user?.email));
             if (visitingMember && (!visitingMember.lastVisitAt || (now - visitingMember.lastVisitAt) > 60_000)) {
                 visitingMember.lastVisitAt = now;
                 shouldPersist = true;
@@ -139,7 +138,7 @@ export async function PUT(
             return NextResponse.json({ error: 'Chain not found' }, { status: 404 });
         }
 
-        const memberIndex = chain.members.findIndex((m: any) => m.userId === session.user?.email);
+        const memberIndex = chain.members.findIndex((m: any) => sameUserId(m.userId, session.user?.email));
         if (memberIndex === -1) {
             return NextResponse.json({ error: 'Not a member of this chain' }, { status: 403 });
         }
@@ -149,14 +148,7 @@ export async function PUT(
         }
 
         if (newMemberIdentifier) {
-            const memberIdToFind = newMemberIdentifier.trim().toLowerCase();
-            // Find the user to add
-            const userToAdd = await User.findOne({ 
-                $or: [
-                    { email: memberIdToFind },
-                    { username: { $regex: `^${escapeRegex(memberIdToFind)}$`, $options: 'i' } }
-                ] 
-            }).lean() as any;
+            const userToAdd = await User.findOne(userIdentifierQuery(newMemberIdentifier)).lean() as any;
 
             if (!userToAdd?.email) {
                 return NextResponse.json({ error: 'User not found in database' }, { status: 400 });
@@ -165,7 +157,7 @@ export async function PUT(
             const userId = userToAdd.email;
 
             // Check if already a member
-            if (chain.members.find((m: any) => m.userId === userId)) {
+            if (chain.members.find((m: any) => sameUserId(m.userId, userId))) {
                 return NextResponse.json({ error: 'User is already a member of this chain' }, { status: 400 });
             }
 
@@ -287,7 +279,7 @@ export async function DELETE(
         }
 
         // Only creator can delete, or if createdBy is not set, allow anyone for now (backward compatibility)
-        if (chain.createdBy && chain.createdBy !== session.user.email) {
+        if (chain.createdBy && !sameUserId(chain.createdBy, session.user.email)) {
             return NextResponse.json({ error: 'Only the creator can delete this chain' }, { status: 403 });
         }
 

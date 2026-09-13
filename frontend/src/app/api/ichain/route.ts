@@ -6,9 +6,7 @@ import Chain from '@/models/IChain';
 import User from '@/models/User';
 import { enforceChainVisitWindow } from '@/lib/ichain';
 import { recomputeChainPointsForUsers } from '@/lib/chain-points';
-
-const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const normalizeIdentifier = (value: string) => value.trim().toLowerCase();
+import { normalizeUserId, sameUserId, userIdentifierQuery } from '@/lib/user-identity';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +14,7 @@ export async function GET(request: NextRequest) {
     try {
         await connectDB();
         const now = Date.now();
-        const chainDocs = await Chain.find().sort({ maxTime: -1, createdAt: -1 });
+        const chainDocs = await Chain.find().sort({ createdAt: -1 });
 
         await Promise.all(chainDocs.map(async (chainDoc: any) => {
             if (enforceChainVisitWindow(chainDoc, now)) {
@@ -49,9 +47,6 @@ export async function GET(request: NextRequest) {
             return chain;
         });
 
-        // Re-sort in memory because live updates might change the order
-        chains.sort((a: any, b: any) => (b.maxTime || 0) - (a.maxTime || 0));
-
         return NextResponse.json({ chains });
     } catch (error) {
         console.error('Error fetching chains:', error);
@@ -75,28 +70,20 @@ export async function POST(request: NextRequest) {
 
         await connectDB();
 
-        // Add creator to the member list and normalize identifiers for case-insensitive matching
         const allMemberIdentifiers = [...new Set(
             [...memberIdentifiers, session.user.email]
-                .map((identifier: string) => normalizeIdentifier(identifier))
+                .map((identifier: string) => normalizeUserId(identifier))
                 .filter(Boolean)
         )];
 
         const membersFromDb = await User.find({
-            $or: [
-                { email: { $in: allMemberIdentifiers } },
-                {
-                    $or: allMemberIdentifiers.map((identifier) => ({
-                        username: { $regex: `^${escapeRegex(identifier)}$`, $options: 'i' },
-                    })),
-                },
-            ],
+            $or: allMemberIdentifiers.map((identifier) => userIdentifierQuery(identifier)),
         }).lean() as any[];
 
         const resolvedIdentifiers = new Set<string>();
         membersFromDb.forEach((user) => {
-            if (user.email) resolvedIdentifiers.add(normalizeIdentifier(user.email));
-            if (user.username) resolvedIdentifiers.add(normalizeIdentifier(user.username));
+            if (user.email) resolvedIdentifiers.add(normalizeUserId(user.email));
+            if (user.username) resolvedIdentifiers.add(normalizeUserId(user.username));
         });
 
         const missingIdentifiers = allMemberIdentifiers.filter((identifier) => !resolvedIdentifiers.has(identifier));
@@ -106,15 +93,8 @@ export async function POST(request: NextRequest) {
             }, { status: 400 });
         }
 
-        // Get unique users for the identifiers (email or username)
         const members = await Promise.all(allMemberIdentifiers.map(async (identifier: string) => {
-            const user = await User.findOne({ 
-                $or: [
-                    { email: identifier },
-                    { username: { $regex: `^${escapeRegex(identifier)}$`, $options: 'i' } }
-                ] 
-            }).lean() as any;
-            
+            const user = await User.findOne(userIdentifierQuery(identifier)).lean() as any;
             const userId = user!.email;
 
             return {
@@ -125,7 +105,7 @@ export async function POST(request: NextRequest) {
                 isWorking: false,
                 contributionTime: 0,
                 lastVisitAt: Date.now(),
-                parentId: userId === session.user?.email ? null : session.user?.email, // Creator is root
+                parentId: sameUserId(userId, session.user?.email) ? null : session.user?.email,
                 isStarter: true,
             };
         }));

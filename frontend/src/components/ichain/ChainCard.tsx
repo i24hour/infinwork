@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useState } from 'react';
+import { sameUserId } from '@/lib/user-identity';
 
 interface ChainCardProps {
     chain: {
@@ -27,7 +28,7 @@ export function ChainCard({ chain, rank, onDelete }: ChainCardProps) {
     const [isCopied, setIsCopied] = useState(false);
     const activeMembers = (chain.members || []).filter(m => m.isWorking).length;
     
-    const canDelete = !chain.createdBy || chain.createdBy === session?.user?.email;
+    const canDelete = !chain.createdBy || sameUserId(chain.createdBy, session?.user?.email);
 
     const handleDelete = async (e: React.MouseEvent) => {
         e.preventDefault();
@@ -127,6 +128,11 @@ export function ChainCard({ chain, rank, onDelete }: ChainCardProps) {
                                 <h3 className="text-xl font-bold text-white group-hover:text-white/90 transition-colors">
                                     {chain.name}
                                 </h3>
+                                {chain.createdAt && Date.now() - new Date(chain.createdAt).getTime() < 72 * 60 * 60 * 1000 && (
+                                    <span className="text-[10px] uppercase tracking-wider font-bold text-emerald-400 bg-emerald-400/10 border border-emerald-400/20 px-2 py-0.5 rounded-full">
+                                        New
+                                    </span>
+                                )}
                                 <button
                                     onClick={handleShare}
                                     className="p-1 text-zinc-500 hover:text-white transition-colors"
