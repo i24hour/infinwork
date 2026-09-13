@@ -12,6 +12,9 @@ export function SignInModal({ isOpen, onClose }: SignInModalProps) {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isSignUp, setIsSignUp] = useState(false);
+    // The demo credentials provider only exists when explicitly enabled for
+    // local development, so the email form stays hidden everywhere else.
+    const showDemoEmailForm = process.env.NEXT_PUBLIC_ALLOW_DEMO_CREDENTIALS === 'true';
 
     if (!isOpen) return null;
 
@@ -72,57 +75,61 @@ export function SignInModal({ isOpen, onClose }: SignInModalProps) {
                 </button>
 
                 {/* Divider */}
-                <div className="relative my-6">
-                    <div className="absolute inset-0 flex items-center">
-                        <div className="w-full border-t border-white/10"></div>
-                    </div>
-                    <div className="relative flex justify-center text-sm">
-                        <span className="px-2 bg-black text-zinc-500">Or continue with email</span>
-                    </div>
-                </div>
+                {showDemoEmailForm && (
+                    <>
+                        <div className="relative my-6">
+                            <div className="absolute inset-0 flex items-center">
+                                <div className="w-full border-t border-white/10"></div>
+                            </div>
+                            <div className="relative flex justify-center text-sm">
+                                <span className="px-2 bg-black text-zinc-500">Or continue with email</span>
+                            </div>
+                        </div>
 
-                {/* Email Sign In Form */}
-                <form onSubmit={handleEmailSignIn} className="space-y-4">
-                    <div>
-                        <label className="block text-sm text-zinc-400 mb-2">Email</label>
-                        <input
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            placeholder="you@example.com"
-                            className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-white/30 focus:bg-white/10 transition-all"
-                            required
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm text-zinc-400 mb-2">Password</label>
-                        <input
-                            type="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            placeholder="••••••••"
-                            className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-white/30 focus:bg-white/10 transition-all"
-                            required
-                        />
-                    </div>
-                    <button
-                        type="submit"
-                        className="w-full px-6 py-3 bg-black hover:bg-white/5 text-white font-medium rounded-lg transition-all"
-                    >
-                        {isSignUp ? 'Sign Up' : 'Sign In'}
-                    </button>
-                </form>
+                        {/* Email Sign In Form */}
+                        <form onSubmit={handleEmailSignIn} className="space-y-4">
+                            <div>
+                                <label className="block text-sm text-zinc-400 mb-2">Email</label>
+                                <input
+                                    type="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    placeholder="you@example.com"
+                                    className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-white/30 focus:bg-white/10 transition-all"
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm text-zinc-400 mb-2">Password</label>
+                                <input
+                                    type="password"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    placeholder="••••••••"
+                                    className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-zinc-500 focus:outline-none focus:border-white/30 focus:bg-white/10 transition-all"
+                                    required
+                                />
+                            </div>
+                            <button
+                                type="submit"
+                                className="w-full px-6 py-3 bg-black hover:bg-white/5 text-white font-medium rounded-lg transition-all"
+                            >
+                                {isSignUp ? 'Sign Up' : 'Sign In'}
+                            </button>
+                        </form>
 
-                {/* Toggle Sign Up */}
-                <div className="mt-4 text-center text-sm text-zinc-500">
-                    {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
-                    <button
-                        onClick={() => setIsSignUp(!isSignUp)}
-                        className="text-white hover:text-zinc-300 transition-colors"
-                    >
-                        {isSignUp ? 'Sign In' : 'Sign Up'}
-                    </button>
-                </div>
+                        {/* Toggle Sign Up */}
+                        <div className="mt-4 text-center text-sm text-zinc-500">
+                            {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
+                            <button
+                                onClick={() => setIsSignUp(!isSignUp)}
+                                className="text-white hover:text-zinc-300 transition-colors"
+                            >
+                                {isSignUp ? 'Sign In' : 'Sign Up'}
+                            </button>
+                        </div>
+                    </>
+                )}
 
                 {/* Guest Mode */}
                 <div className="mt-6 pt-6 border-t border-white/10">

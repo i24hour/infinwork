@@ -6,6 +6,8 @@ import connectDB from '@/lib/mongodb';
 import { cookies } from 'next/headers';
 import { ensureUserHasDefaultUsername } from '@/lib/username';
 import User from '@/models/User';
+import { GITHUB_LINK_COOKIE, verifyGithubLinkToken } from '@/lib/github-link';
+import { isDemoCredentialsEnabled, resolveAuthSecret } from '@/lib/auth-env';
 
 export const authOptions: NextAuthOptions = {
     providers: [
@@ -22,24 +24,29 @@ export const authOptions: NextAuthOptions = {
                 }
             }
         }),
-        CredentialsProvider({
-            name: "Email",
-            credentials: {
-                email: { label: "Email", type: "email", placeholder: "you@example.com" },
-                password: { label: "Password", type: "password" }
-            },
-            async authorize(credentials) {
-                // For demo purposes - in production, verify against your database
-                if (credentials?.email && credentials?.password) {
-                    return {
-                        id: credentials.email,
-                        email: credentials.email,
-                        name: credentials.email.split('@')[0],
-                    };
-                }
-                return null;
-            }
-        })
+        // Demo-only provider: accepts any email+password with no verification.
+        // Never registered unless ALLOW_DEMO_CREDENTIALS=true (local dev only).
+        ...(isDemoCredentialsEnabled()
+            ? [
+                CredentialsProvider({
+                    name: "Email (demo)",
+                    credentials: {
+                        email: { label: "Email", type: "email", placeholder: "you@example.com" },
+                        password: { label: "Password", type: "password" }
+                    },
+                    async authorize(credentials) {
+                        if (credentials?.email && credentials?.password) {
+                            return {
+                                id: credentials.email,
+                                email: credentials.email,
+                                name: credentials.email.split('@')[0],
+                            };
+                        }
+                        return null;
+                    }
+                }),
+            ]
+            : []),
     ],
     pages: {
         signIn: '/itime', // Keep user on iTime page
@@ -62,27 +69,30 @@ export const authOptions: NextAuthOptions = {
                 if (account && account.provider === 'github') {
                     // When user authenticates with github, update their profile
                     const githubProfile = profile as any;
-                    
-                    // nextJS 16 safe cookie retrieval
-                    let linkCookieValue = null;
+
+                    // nextJS 16 safe cookie retrieval. The link token is minted
+                    // server-side by /api/user/link-github-init and HMAC-signed,
+                    // so a client can never forge a link for another user's email.
+                    let linkToken: string | null = null;
                     try {
                         let cStore: any = cookies();
                         if (cStore instanceof Promise || typeof cStore.then === 'function') {
                             cStore = await cStore;
                         }
-                        linkCookieValue = cStore.get('github_link_email')?.value;
+                        linkToken = cStore.get(GITHUB_LINK_COOKIE)?.value ?? null;
                     } catch (e) {
                         console.error('cookie error', e);
                     }
-                    
-                    let isLinking = false;
+
+                    const linkedEmail = verifyGithubLinkToken(linkToken);
+                    const isLinking = Boolean(linkedEmail);
+
                     let emailToFind = user?.email || token.email;
 
-                    if (linkCookieValue) {
-                        emailToFind = decodeURIComponent(linkCookieValue);
-                        isLinking = true;
+                    if (linkedEmail) {
+                        emailToFind = linkedEmail;
                     }
-                    
+
                     if (emailToFind) {
                         const existingUser = await User.findOne({ email: emailToFind });
                         const isSameGithubAccount = existingUser?.githubId === account.providerAccountId;
@@ -128,8 +138,7 @@ export const authOptions: NextAuthOptions = {
                                 token.email = originalUser.email;
                                 token.name = originalUser.username;
                                 token.id = originalUser._id.toString();
-                                // token.picture = originalUser.image || token.picture;
-                                
+
                                 // Return early so NextAuth doesn't overwrite it with GitHub details
                                 return token;
                             }
@@ -148,7 +157,8 @@ export const authOptions: NextAuthOptions = {
             return token;
         }
     },
-    secret: process.env.NEXTAUTH_SECRET || "your-secret-key-change-this-in-production",
+    // Refuses to boot in production without NEXTAUTH_SECRET (see auth-env.ts).
+    secret: resolveAuthSecret(),
 };
 
 const handler = NextAuth(authOptions);
