@@ -5,10 +5,16 @@ import connectDB from '@/lib/mongodb';
 import ITimeTask from '@/models/ITimeTask';
 import User from '@/models/User';
 import { autoCancelExpiredActiveTasks } from '@/lib/itime-runtime';
+import {
+    isPlainObject,
+    isValidObjectIdString,
+    readJsonBody,
+    sanitizeItimeTaskInput,
+} from '@/lib/validate';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
     try {
         const session = await getServerSession(authOptions);
 
@@ -17,15 +23,13 @@ export async function GET(request: NextRequest) {
         }
 
         await connectDB();
-        
+
         // Auto-register/update the User in our collection
-        const user = await User.findOneAndUpdate(
+        await User.findOneAndUpdate(
             { email: session.user.email },
             { $setOnInsert: { email: session.user.email } },
             { upsert: true, new: true }
         );
-
-        console.log(`[DEBUG_LOG] User auto-registered/checked: ${session.user.email}, count after this might change.`);
 
         await autoCancelExpiredActiveTasks({ userId: session.user.email });
 
@@ -48,13 +52,26 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const body = await request.json();
+        const parsed = await readJsonBody<unknown>(request);
+        if (!parsed.ok) {
+            return NextResponse.json({ error: parsed.error }, { status: 400 });
+        }
+
+        const sanitized = sanitizeItimeTaskInput(parsed.body, { requireTitle: true });
+        if (!sanitized.ok) {
+            return NextResponse.json({ error: sanitized.error }, { status: 400 });
+        }
 
         await connectDB();
 
         const task = await ITimeTask.create({
-            ...body,
+            ...sanitized.value,
             userId: session.user.email,
+            startTime: sanitized.value.startTime ?? Date.now(),
+            pausedElapsed: sanitized.value.pausedElapsed ?? 0,
+            enabled: sanitized.value.enabled ?? true,
+            completed: sanitized.value.completed ?? false,
+            description: sanitized.value.description ?? '',
         });
 
         return NextResponse.json({ task }, { status: 201 });
@@ -72,15 +89,33 @@ export async function PUT(request: NextRequest) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const body = await request.json();
-        const { _id, ...updates } = body;
+        const parsed = await readJsonBody<unknown>(request);
+        if (!parsed.ok) {
+            return NextResponse.json({ error: parsed.error }, { status: 400 });
+        }
+        if (!isPlainObject(parsed.body)) {
+            return NextResponse.json({ error: 'Invalid task payload' }, { status: 400 });
+        }
+
+        const { _id, ...rest } = parsed.body;
+        if (!isValidObjectIdString(_id)) {
+            return NextResponse.json({ error: 'Valid task ID required' }, { status: 400 });
+        }
+
+        const sanitized = sanitizeItimeTaskInput(rest, { requireTitle: false });
+        if (!sanitized.ok) {
+            return NextResponse.json({ error: sanitized.error }, { status: 400 });
+        }
+        if (Object.keys(sanitized.value).length === 0) {
+            return NextResponse.json({ error: 'No updatable fields provided' }, { status: 400 });
+        }
 
         await connectDB();
         await autoCancelExpiredActiveTasks({ userId: session.user.email });
 
         const task = await ITimeTask.findOneAndUpdate(
             { _id, userId: session.user.email },
-            updates,
+            { $set: sanitized.value },
             { new: true }
         );
 
@@ -106,8 +141,8 @@ export async function DELETE(request: NextRequest) {
         const { searchParams } = new URL(request.url);
         const id = searchParams.get('id');
 
-        if (!id) {
-            return NextResponse.json({ error: 'Task ID required' }, { status: 400 });
+        if (!isValidObjectIdString(id)) {
+            return NextResponse.json({ error: 'Valid task ID required' }, { status: 400 });
         }
 
         await connectDB();

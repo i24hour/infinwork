@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
 import ITimeTask from '@/models/ITimeTask';
 import User from '@/models/User';
@@ -12,13 +14,12 @@ export async function GET(
     context: { params: Promise<{ userId: string }> }
 ) {
     try {
-        // Authentication intentionally removed so anyone can view a worker's public profile tasks
-        // const session = await getServerSession(authOptions);
+        const session = await getServerSession(authOptions);
 
         const params = await context.params;
         const targetUserId = decodeURIComponent(params.userId);
 
-        if (!targetUserId) {
+        if (!targetUserId || typeof targetUserId !== 'string' || targetUserId.length > 320) {
             return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
         }
 
@@ -28,12 +29,16 @@ export async function GET(
 
         const user = await User.findOne({ email: targetUserId }).lean() as any;
 
-        const tasks = await ITimeTask.find({
-            userId: targetUserId
-        }).sort({ createdAt: -1 });
+        // Owners see all of their tasks; everyone else only sees public tasks.
+        const isOwner = session?.user?.email?.toLowerCase() === targetUserId.toLowerCase();
+        const taskQuery = isOwner
+            ? { userId: targetUserId }
+            : { userId: targetUserId, isPublic: { $ne: false } };
 
-        return NextResponse.json({ 
-            tasks, 
+        const tasks = await ITimeTask.find(taskQuery).sort({ createdAt: -1 });
+
+        return NextResponse.json({
+            tasks,
             user: {
                 username: user?.username || targetUserId.split('@')[0],
                 image: user?.image || null,
@@ -42,7 +47,7 @@ export async function GET(
                 githubPointsHistory: user?.githubPointsHistory || [],
                 chainPoints: user?.chainPoints || 0,
                 chainPointsHistory: user?.chainPointsHistory || []
-            } 
+            }
         });
     } catch (error) {
         console.error('Error fetching tasks for worker:', error);

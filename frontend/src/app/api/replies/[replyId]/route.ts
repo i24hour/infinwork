@@ -15,7 +15,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ replyId: 
         const { isPublic, content } = await req.json();
 
         await connectMongo();
-        
+
         const reply = await Reply.findById(replyId);
         if (!reply) {
             return NextResponse.json({ error: 'Reply not found' }, { status: 404 });
@@ -25,13 +25,23 @@ export async function PATCH(req: Request, context: { params: Promise<{ replyId: 
             return NextResponse.json({ error: 'Unauthorized to edit this reply' }, { status: 403 });
         }
 
-        if (isPublic !== undefined) reply.isPublic = isPublic;
+        if (isPublic !== undefined) {
+            if (typeof isPublic !== 'boolean') {
+                return NextResponse.json({ error: 'isPublic must be a boolean' }, { status: 400 });
+            }
+            reply.isPublic = isPublic;
+        }
         if (content !== undefined) {
-            reply.content = content;
-            if (content !== reply.content) {
+            if (typeof content !== 'string') {
+                return NextResponse.json({ error: 'Reply content must be a string' }, { status: 400 });
+            }
+            const trimmed = content.trim();
+            if (trimmed.length > 5000) {
+                return NextResponse.json({ error: 'Reply content must be at most 5000 characters' }, { status: 400 });
+            }
+            if (trimmed !== reply.content) {
+                reply.content = trimmed;
                 reply.isEdited = true;
-            } else {
-                reply.isEdited = true; // explicitly set if content was passed
             }
         }
         await reply.save();

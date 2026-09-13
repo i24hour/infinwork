@@ -8,7 +8,6 @@ export async function GET() {
         const adminCount = await countAdmins();
         return NextResponse.json({
             hasAdmin: adminCount > 0,
-            adminCount,
         });
     } catch (error: any) {
         console.error('admin status failed:', error);
