@@ -13,11 +13,11 @@ export async function GET() {
     try {
         const session = await getServerSession(authOptions);
 
+        // The workers leaderboard is intentionally public; only public tasks are
+        // returned (see the isPublic filter below). The session is only used
+        // for the signed-in viewer's optional GitHub sync.
         if (!session?.user?.email) {
-            // For safety, only allow logged-in users to view the workers list
-            // temporarily allowing access for preview purposes
-            // return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-            console.log("No session found in /api/workers, bypassing for preview");
+            console.log("No session found in /api/workers, serving public leaderboard");
         }
 
         await connectDB();
@@ -31,8 +31,10 @@ export async function GET() {
             }
         }
 
-        // Fetch all tasks (public + private) so score matches personal iTime view
-        const allTasks = await ITimeTask.find({}).lean() as any[];
+        // The workers leaderboard is intentionally public. Only public tasks are
+        // included so private task titles, descriptions, and timings never leak
+        // to other users. Legacy tasks without the flag default to public.
+        const allTasks = await ITimeTask.find({ isPublic: { $ne: false } }).lean() as any[];
 
         // Fetch all users to map emails to usernames
         let allUsers = await User.find().lean() as any[];

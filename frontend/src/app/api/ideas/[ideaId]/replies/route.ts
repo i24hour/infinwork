@@ -5,8 +5,11 @@ import connectDB from '@/lib/mongodb';
 import Idea from '@/models/Idea';
 import Reply from '@/models/Reply';
 import User from '@/models/User';
+import { isValidObjectIdString } from '@/lib/validate';
 
 export const dynamic = 'force-dynamic';
+
+const MAX_REPLY_CONTENT_LENGTH = 5000;
 
 const MAX_REPLY_IMAGE_BYTES = 2 * 1024 * 1024;
 const ALLOWED_IMAGE_DATA_URL = /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
@@ -47,6 +50,11 @@ export async function GET(
     try {
         const session = await getServerSession(authOptions);
         const { ideaId } = await params;
+
+        if (!isValidObjectIdString(ideaId)) {
+            return NextResponse.json({ error: 'Invalid idea ID' }, { status: 400 });
+        }
+
         await connectDB();
 
         const idea = await Idea.findById(ideaId);
@@ -56,6 +64,10 @@ export async function GET(
 
         const userEmail = session?.user?.email;
         const isIdeaOwner = userEmail === idea.createdBy;
+
+        if (!idea.isPublic && !isIdeaOwner) {
+            return NextResponse.json({ error: 'Idea not found' }, { status: 404 });
+        }
 
         let query: any = { ideaId };
 
@@ -77,9 +89,9 @@ export async function GET(
 
         // Attach usernames to replies
         const userEmails = Array.from(new Set(replies.map((r: any) => r.createdBy)));
-        const users = await User.find({ userId: { $in: userEmails } }, 'userId username').lean();
+        const users = await User.find({ email: { $in: userEmails } }, 'email username').lean();
         const userMap = users.reduce((acc: any, user: any) => {
-            acc[user.userId] = user.username || user.userId;
+            acc[user.email] = user.username || user.email;
             return acc;
         }, {});
 
@@ -107,12 +119,21 @@ export async function POST(
         }
 
         const { ideaId } = await params;
+
+        if (!isValidObjectIdString(ideaId)) {
+            return NextResponse.json({ error: 'Invalid idea ID' }, { status: 400 });
+        }
+
         const body = await request.json();
         const { content, isPublic, imageUrl } = body;
         const trimmedContent = typeof content === 'string' ? content.trim() : '';
 
         if (typeof content !== 'undefined' && typeof content !== 'string') {
             return NextResponse.json({ error: 'Reply content must be a string' }, { status: 400 });
+        }
+
+        if (trimmedContent.length > MAX_REPLY_CONTENT_LENGTH) {
+            return NextResponse.json({ error: `Reply content must be at most ${MAX_REPLY_CONTENT_LENGTH} characters` }, { status: 400 });
         }
 
         if (typeof isPublic !== 'undefined' && typeof isPublic !== 'boolean') {
@@ -132,6 +153,10 @@ export async function POST(
 
         const idea = await Idea.findById(ideaId);
         if (!idea) {
+            return NextResponse.json({ error: 'Idea not found' }, { status: 404 });
+        }
+
+        if (!idea.isPublic && idea.createdBy !== session.user.email) {
             return NextResponse.json({ error: 'Idea not found' }, { status: 404 });
         }
 

@@ -5,6 +5,7 @@ import connectDB from '@/lib/mongodb';
 import Chain from '@/models/IChain';
 import User from '@/models/User';
 import { ensureUserHasDefaultUsername } from '@/lib/username';
+import { normalizeImageDataUrl } from '@/lib/validate';
 
 export async function POST(request: NextRequest) {
     try {
@@ -18,9 +19,10 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Image is required' }, { status: 400 });
         }
 
-        // Validate image is Base64 (simple check)
-        if (!image.startsWith('data:image/')) {
-            return NextResponse.json({ error: 'Invalid image format. Expected Base64 data URL.' }, { status: 400 });
+        // Strict allowlist + size cap: raster data URLs only, max 2MB.
+        const { image: normalizedImage, error: imageError } = normalizeImageDataUrl(image);
+        if (imageError || !normalizedImage) {
+            return NextResponse.json({ error: imageError || 'Invalid image' }, { status: 400 });
         }
 
         await connectDB();
@@ -32,7 +34,7 @@ export async function POST(request: NextRequest) {
         // Update or Create User document
         await User.findOneAndUpdate(
             { email: userEmail },
-            { $set: { image: image } },
+            { $set: { image: normalizedImage } },
             { upsert: true }
         );
 
@@ -40,15 +42,15 @@ export async function POST(request: NextRequest) {
         // MongoDB updateMany with array filters is powerful for this
         await Chain.updateMany(
             { 'members.userId': userEmail },
-            { $set: { 'members.$[elem].image': image } },
+            { $set: { 'members.$[elem].image': normalizedImage } },
             { arrayFilters: [{ 'elem.userId': userEmail }] }
         );
 
-        // Note: Since we don't have a User model, we might want to store it in ITimeTask as well 
+        // Note: Since we don't have a User model, we might want to store it in ITimeTask as well
         // if we ever use that as a source of truth for user info.
         // But for now, updating all chains is the most direct way to satisfy the requirement.
 
-        return NextResponse.json({ success: true, image });
+        return NextResponse.json({ success: true, image: normalizedImage });
     } catch (error) {
         console.error('Error updating profile image:', error);
         return NextResponse.json({ error: 'Failed to update profile image' }, { status: 500 });

@@ -61,9 +61,11 @@ export default function ProfileEditorPage() {
         load();
     }, [userEmail, loadGithub]);
 
-    const handleConnectGithub = () => {
-        if (session?.user?.email) {
-            document.cookie = `github_link_email=${encodeURIComponent(session.user.email)}; path=/; max-age=300`;
+    const handleConnectGithub = async () => {
+        try {
+            await fetch('/api/user/link-github-init', { method: 'POST' });
+        } catch {
+            // fall through to signIn below
         }
         signIn('github');
     };

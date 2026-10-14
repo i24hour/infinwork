@@ -143,10 +143,14 @@ export default function SettingsPage() {
         }
     };
 
-    const handleConnectGithub = () => {
-        // Set a 5-minute cookie with current email to tell NextAuth we are linking accounts, not replacing sessions
-        if (session?.user?.email) {
-            document.cookie = `github_link_email=${encodeURIComponent(session.user.email)}; path=/; max-age=300`;
+    const handleConnectGithub = async () => {
+        // Ask the server to set a short-lived signed link cookie so NextAuth
+        // merges GitHub onto this account instead of replacing the session.
+        // Falls back to a plain GitHub sign-in when the init call fails.
+        try {
+            await fetch('/api/user/link-github-init', { method: 'POST' });
+        } catch {
+            // fall through to signIn below
         }
         signIn('github');
     };

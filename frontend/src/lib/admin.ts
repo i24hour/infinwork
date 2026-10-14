@@ -56,5 +56,13 @@ export async function claimFirstAdmin(email: string): Promise<{
         { upsert: true, new: true }
     );
 
+    // Close the check-then-set race: if two callers claimed concurrently, only
+    // one may remain admin. The loser is rolled back and can retry.
+    const adminsAfterClaim = await User.countDocuments({ isAdmin: true });
+    if (adminsAfterClaim > 1) {
+        await User.updateOne({ email }, { $set: { isAdmin: false } });
+        return { claimed: false, reason: 'Another admin claimed first — please retry' };
+    }
+
     return { claimed: true };
 }
