@@ -3,16 +3,12 @@
 import { useState, useEffect, useCallback, use, useMemo } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
-import dynamic from 'next/dynamic';
 import { LiveTimer } from '@/components/LiveTimer';
 import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } from '@/lib/score';
-
-const PerformanceChart = dynamic(
-    () => import('@/components/PerformanceChart').then(mod => mod.PerformanceChart),
-    { ssr: false, loading: () => <div className="h-[500px] bg-black rounded-2xl border border-white/10 flex items-center justify-center text-zinc-500">Loading chart...</div> }
-);
+import { PerformanceChart } from '@/components/PerformanceChart';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
+import { fetchWithCache, getCachedData } from '@/lib/client-cache';
 
 // Use same types as ITimeTracker
 interface ITimeTask {
@@ -48,8 +44,26 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
 
     const { data: session } = useSession();
     const router = useRouter();
+    const cacheKey = `/api/workers/${encodeURIComponent(userId)}/tasks`;
+    const initialCached = getCachedData<{
+        tasks?: Array<Omit<ITimeTask, 'id'> & { _id?: string; id?: string }>;
+        user?: {
+            username: string;
+            image: string | null;
+            points?: number;
+            githubPointsLastUpdatedAt?: string | null;
+            githubPointsHistory?: GithubPointsSnapshot[] | null;
+            chainPoints?: number;
+            chainPointsHistory?: ChainPointsSnapshot[] | null;
+        };
+    }>(cacheKey);
 
-    const [tasks, setTasks] = useState<ITimeTask[]>([]);
+    const [tasks, setTasks] = useState<ITimeTask[]>(() =>
+        (initialCached?.tasks || []).map((t) => ({
+            ...t,
+            id: t._id || t.id || '',
+        }))
+    );
     const [userData, setUserData] = useState<{
         username: string;
         image: string | null;
@@ -58,44 +72,57 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
         githubPointsHistory?: GithubPointsSnapshot[] | null;
         chainPoints?: number;
         chainPointsHistory?: ChainPointsSnapshot[] | null;
-    } | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
+    } | null>(() => initialCached?.user || null);
+    const [isLoading, setIsLoading] = useState<boolean>(() => !initialCached);
     const [error, setError] = useState<string | null>(null);
     const [selectedTask, setSelectedTask] = useState<ITimeTask | null>(null);
     const [scoreNow, setScoreNow] = useState(() => Date.now());
-    const [gamificationPoints, setGamificationPoints] = useState(0);
-    const [gamificationPointsLastUpdatedAt, setGamificationPointsLastUpdatedAt] = useState<string | null>(null);
-    const [githubPointsHistory, setGithubPointsHistory] = useState<GithubPointsSnapshot[] | null>(null);
-    const [chainPoints, setChainPoints] = useState(0);
-    const [chainPointsHistory, setChainPointsHistory] = useState<ChainPointsSnapshot[] | null>(null);
+    const [gamificationPoints, setGamificationPoints] = useState<number>(() => initialCached?.user?.points || 0);
+    const [gamificationPointsLastUpdatedAt, setGamificationPointsLastUpdatedAt] = useState<string | null>(() =>
+        initialCached?.user?.githubPointsLastUpdatedAt || null
+    );
+    const [githubPointsHistory, setGithubPointsHistory] = useState<GithubPointsSnapshot[] | null>(() =>
+        Array.isArray(initialCached?.user?.githubPointsHistory) ? initialCached!.user!.githubPointsHistory! : null
+    );
+    const [chainPoints, setChainPoints] = useState<number>(() => initialCached?.user?.chainPoints || 0);
+    const [chainPointsHistory, setChainPointsHistory] = useState<ChainPointsSnapshot[] | null>(() =>
+        Array.isArray(initialCached?.user?.chainPointsHistory) ? initialCached!.user!.chainPointsHistory! : null
+    );
 
     const fetchTasks = useCallback(async () => {
         try {
-            const response = await fetch(`/api/workers/${encodeURIComponent(userId)}/tasks`);
-            if (response.ok) {
-                const data = await response.json();
-                setTasks(data.tasks.map((t: any) => ({
-                    ...t,
-                    id: t._id,
-                })));
-                if (data.user) {
-                    setUserData(data.user);
-                    setGamificationPoints(data.user.points || 0);
-                    setGamificationPointsLastUpdatedAt(data.user.githubPointsLastUpdatedAt || null);
-                    setGithubPointsHistory(Array.isArray(data.user.githubPointsHistory) ? data.user.githubPointsHistory : null);
-                    setChainPoints(data.user.chainPoints || 0);
-                    setChainPointsHistory(Array.isArray(data.user.chainPointsHistory) ? data.user.chainPointsHistory : null);
-                }
-            } else {
-                throw new Error('Failed to fetch tasks');
+            const data = await fetchWithCache<{
+                tasks: Array<Omit<ITimeTask, 'id'> & { _id?: string; id?: string }>;
+                user?: {
+                    username: string;
+                    image: string | null;
+                    points?: number;
+                    githubPointsLastUpdatedAt?: string | null;
+                    githubPointsHistory?: GithubPointsSnapshot[] | null;
+                    chainPoints?: number;
+                    chainPointsHistory?: ChainPointsSnapshot[] | null;
+                };
+            }>(cacheKey, { dedupingIntervalMs: 3000 });
+            setTasks((data.tasks || []).map((t) => ({
+                ...t,
+                id: t._id || t.id || '',
+            })));
+            if (data.user) {
+                setUserData(data.user);
+                setGamificationPoints(data.user.points || 0);
+                setGamificationPointsLastUpdatedAt(data.user.githubPointsLastUpdatedAt || null);
+                setGithubPointsHistory(Array.isArray(data.user.githubPointsHistory) ? data.user.githubPointsHistory : null);
+                setChainPoints(data.user.chainPoints || 0);
+                setChainPointsHistory(Array.isArray(data.user.chainPointsHistory) ? data.user.chainPointsHistory : null);
             }
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error('Error fetching tasks:', err);
-            setError(err.message || 'Error loading tasks');
+            const message = err instanceof Error ? err.message : 'Error loading tasks';
+            setError(message);
         } finally {
             setIsLoading(false);
         }
-    }, [userId]);
+    }, [cacheKey]);
 
     useEffect(() => {
         fetchTasks();

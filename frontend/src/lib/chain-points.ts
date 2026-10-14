@@ -97,6 +97,7 @@ export async function recomputeChainPointsForUsers(userIds: string[]): Promise<v
     if (normalizedUserIds.length === 0) return;
 
     const aggregateRows = await Chain.aggregate([
+        { $match: { 'members.userId': { $in: normalizedUserIds } } },
         { $unwind: '$members' },
         { $match: { 'members.userId': { $in: normalizedUserIds } } },
         {

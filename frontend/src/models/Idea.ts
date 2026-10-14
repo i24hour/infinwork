@@ -35,5 +35,6 @@ const IdeaSchema = new mongoose.Schema<IIdea>({
 });
 
 IdeaSchema.index({ createdBy: 1, createdAt: -1 });
+IdeaSchema.index({ isPublic: 1, createdAt: -1 });
 
 export default mongoose.models.Idea || mongoose.model<IIdea>('Idea', IdeaSchema);

@@ -5,25 +5,38 @@ import { Sidebar } from '@/components/Sidebar';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import { useSession, signIn } from 'next-auth/react';
 import { motion } from 'framer-motion';
+import { fetchWithCache, getCachedData, setCachedData } from '@/lib/client-cache';
+
+interface SettingsResponse {
+    username?: string;
+    totalScore?: number;
+    points?: number;
+    chainPoints?: number;
+    githubUsername?: string | null;
+    lastGithubSyncAt?: string | null;
+}
 
 export default function SettingsPage() {
-    const { data: session } = useSession();
-    const [username, setUsername] = useState('');
-    const [totalScore, setTotalScore] = useState(0);
-    const [githubPoints, setGithubPoints] = useState(0);
-    const [chainPoints, setChainPoints] = useState(0);
-    const [githubUsername, setGithubUsername] = useState<string | null>(null);
-    const [loading, setLoading] = useState(true);
+    const { data: session, status } = useSession();
+    const initialCached = getCachedData<SettingsResponse>('/api/user/settings');
+    const [username, setUsername] = useState<string>(() => initialCached?.username || '');
+    const [totalScore, setTotalScore] = useState<number>(() => initialCached?.totalScore || 0);
+    const [githubPoints, setGithubPoints] = useState<number>(() => initialCached?.points || 0);
+    const [chainPoints, setChainPoints] = useState<number>(() => initialCached?.chainPoints || 0);
+    const [githubUsername, setGithubUsername] = useState<string | null>(() => initialCached?.githubUsername || null);
+    const [loading, setLoading] = useState<boolean>(() => !initialCached);
     const [saving, setSaving] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const [message, setMessage] = useState({ type: '', text: '' });
-    const [lastGithubSyncAt, setLastGithubSyncAt] = useState<string | null>(null);
+    const [lastGithubSyncAt, setLastGithubSyncAt] = useState<string | null>(() => initialCached?.lastGithubSyncAt || null);
     const [isRulesOpen, setIsRulesOpen] = useState(false);
 
-    const fetchSettings = useCallback(async () => {
+    const fetchSettings = useCallback(async (force: boolean = false) => {
         try {
-            const res = await fetch('/api/user/settings');
-            const data = await res.json();
+            const data = await fetchWithCache<SettingsResponse>('/api/user/settings', {
+                dedupingIntervalMs: 5000,
+                force,
+            });
             if (data.username) {
                 setUsername(data.username);
             }
@@ -50,10 +63,12 @@ export default function SettingsPage() {
     }, []);
 
     useEffect(() => {
-        if (session) {
-            fetchSettings();
+        if (status === 'unauthenticated') {
+            setLoading(false);
+            return;
         }
-    }, [fetchSettings, session]);
+        fetchSettings();
+    }, [fetchSettings, status]);
 
     useEffect(() => {
         if (!session) return;
@@ -91,6 +106,10 @@ export default function SettingsPage() {
             const data = await res.json();
 
             if (res.ok) {
+                setCachedData<SettingsResponse>('/api/user/settings', (prev) => ({
+                    ...(prev || {}),
+                    username: data.username || username,
+                }));
                 setMessage({ type: 'success', text: 'Username updated successfully!' });
             } else {
                 setMessage({ type: 'error', text: data.error || 'Failed to update username' });
@@ -110,7 +129,7 @@ export default function SettingsPage() {
             if (res.ok) {
                 setGithubUsername(null);
                 setLastGithubSyncAt(null);
-                await fetchSettings();
+                await fetchSettings(true);
                 setMessage({ type: 'success', text: 'GitHub disconnected successfully.' });
             } else {
                 setMessage({ type: 'error', text: 'Failed to disconnect GitHub.' });
@@ -131,7 +150,7 @@ export default function SettingsPage() {
             
             if (res.ok) {
                 setLastGithubSyncAt(data.lastGithubSyncAt || new Date().toISOString());
-                await fetchSettings();
+                await fetchSettings(true);
                 setMessage({ type: 'success', text: `Sync complete! Earned ${data.pointsEarned} GitHub points.` });
             } else {
                 setMessage({ type: 'error', text: data.error || 'Failed to sync GitHub' });

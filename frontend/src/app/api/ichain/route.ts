@@ -132,29 +132,45 @@ export async function POST(request: NextRequest) {
             }, { status: 400 });
         }
 
-        // Get unique users for the identifiers (email or username)
-        const members = await Promise.all(allMemberIdentifiers.map(async (identifier: string) => {
-            const user = await User.findOne({ 
-                $or: [
-                    { email: identifier },
-                    { username: { $regex: `^${escapeRegex(identifier)}$`, $options: 'i' } }
-                ] 
-            }).lean() as any;
-            
-            const userId = user!.email;
+        // Get unique users for the identifiers (email or username) using the already-queried membersFromDb
+        const userByIdentifier = new Map<string, any>();
+        for (const user of membersFromDb) {
+            if (user.email) userByIdentifier.set(normalizeIdentifier(user.email), user);
+            if (user.username) userByIdentifier.set(normalizeIdentifier(user.username), user);
+        }
 
-            return {
-                userId: userId,
-                name: user?.username || userId.split('@')[0],
-                image: user?.image || null,
+        const seenEmails = new Set<string>();
+        const members: Array<{
+            userId: string;
+            name: string;
+            image: string | null;
+            joinedAt: number;
+            isWorking: boolean;
+            contributionTime: number;
+            lastVisitAt: number;
+            parentId: string | null;
+            isStarter: boolean;
+        }> = [];
+
+        for (const identifier of allMemberIdentifiers) {
+            const user = userByIdentifier.get(identifier);
+            if (!user?.email) continue;
+            const userId = user.email;
+            if (seenEmails.has(userId)) continue;
+            seenEmails.add(userId);
+
+            members.push({
+                userId,
+                name: user.username || userId.split('@')[0],
+                image: user.image || null,
                 joinedAt: Date.now(),
                 isWorking: false,
                 contributionTime: 0,
                 lastVisitAt: Date.now(),
                 parentId: userId === session.user?.email ? null : session.user?.email, // Creator is root
                 isStarter: true,
-            };
-        }));
+            });
+        }
 
         const chain = await Chain.create({
             name: name.trim(),

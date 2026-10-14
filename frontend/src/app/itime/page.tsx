@@ -4,16 +4,18 @@ import { Sidebar } from '@/components/Sidebar';
 import { SignInModal } from '@/components/SignInModal';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import Image from 'next/image';
-import dynamic from 'next/dynamic';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } from '@/lib/score';
-
-const PerformanceChart = dynamic(
-    () => import('@/components/PerformanceChart').then(mod => mod.PerformanceChart),
-    { ssr: false, loading: () => <div className="h-[500px] bg-black rounded-2xl border border-white/10 flex items-center justify-center text-zinc-500">Loading chart...</div> }
-);
+import { PerformanceChart } from '@/components/PerformanceChart';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { LiveTimer, LiveTotalTimer, LivePauseCountdown } from '@/components/LiveTimer';
+import {
+    fetchWithCache,
+    getCachedData,
+    getInitialIsLightTheme,
+    invalidateCache,
+    setCachedData,
+} from '@/lib/client-cache';
 
 interface ITimeTask {
     id: string;
@@ -51,9 +53,24 @@ interface Milestone {
 
 export default function ITimePage() {
     const { data: session, status } = useSession();
-    const [tasks, setTasks] = useState<ITimeTask[]>([]);
-    const [hasLoadedTasksOnce, setHasLoadedTasksOnce] = useState(false);
-    const [hasLoadedProfileOnce, setHasLoadedProfileOnce] = useState(false);
+    const initialTasksCache = getCachedData<{ tasks?: Array<Omit<ITimeTask, 'id'> & { id?: string }> }>('/api/itime');
+    const initialSettingsCache = getCachedData<{
+        username?: string;
+        points?: number;
+        githubPointsLastUpdatedAt?: string | null;
+        githubPointsHistory?: GithubPointsSnapshot[] | null;
+        chainPoints?: number;
+        chainPointsHistory?: ChainPointsSnapshot[] | null;
+    }>('/api/user/settings');
+
+    const [tasks, setTasks] = useState<ITimeTask[]>(() =>
+        (initialTasksCache?.tasks ?? []).map((task) => ({
+            ...task,
+            id: task._id ?? task.id ?? '',
+        }))
+    );
+    const [hasLoadedTasksOnce, setHasLoadedTasksOnce] = useState<boolean>(() => Boolean(initialTasksCache?.tasks));
+    const [hasLoadedProfileOnce, setHasLoadedProfileOnce] = useState<boolean>(() => Boolean(initialSettingsCache));
     const [newTitle, setNewTitle] = useState('');
     const [newDescription, setNewDescription] = useState('');
     const [selectedTask, setSelectedTask] = useState<ITimeTask | null>(null);
@@ -64,7 +81,7 @@ export default function ITimePage() {
     const [showPauseOptions, setShowPauseOptions] = useState<string | null>(null);
     const [completedTasksPage, setCompletedTasksPage] = useState(1);
     const [scoreNow, setScoreNow] = useState<number>(() => Date.now());
-    const [isLightTheme, setIsLightTheme] = useState(false);
+    const [isLightTheme, setIsLightTheme] = useState<boolean>(() => getInitialIsLightTheme());
 
     useEffect(() => {
         const root = document.documentElement;
@@ -102,53 +119,64 @@ export default function ITimePage() {
         }
     };
 
-    // Fetch tasks from MongoDB for authenticated users
+    // Fetch tasks from MongoDB for authenticated users (fire immediately even while session status is resolving)
     const fetchTasks = useCallback(async () => {
-        if (status === 'loading') return;
-
-        if (status === 'authenticated') {
+        if (status !== 'unauthenticated') {
             try {
-                const response = await fetch('/api/itime');
-                if (response.ok) {
-                    const data = await response.json() as {
-                        tasks?: Array<Omit<ITimeTask, 'id'> & { id?: string }>;
-                    };
-                    setTasks((data.tasks ?? []).map((task) => ({
-                        ...task,
-                        id: task._id ?? task.id ?? '',
-                    })));
-
-                    // If user has a specific image in their session/tasks, we can handle it here if needed
-                    // For now, the image is managed via /api/user/profile and updateSession
-                }
-            } catch (error) {
-                console.error('Failed to fetch tasks:', error);
-            } finally {
+                const data = await fetchWithCache<{
+                    tasks?: Array<Omit<ITimeTask, 'id'> & { id?: string }>;
+                }>('/api/itime', { dedupingIntervalMs: 2000 });
+                setTasks((data.tasks ?? []).map((task) => ({
+                    ...task,
+                    id: task._id ?? task.id ?? '',
+                })));
                 setHasLoadedTasksOnce(true);
+                return;
+            } catch (error) {
+                if (status === 'loading') {
+                    return;
+                }
+                console.error('Failed to fetch tasks:', error);
+                setHasLoadedTasksOnce(true);
+                return;
             }
-        } else {
-            // Load from localStorage for guest users
-            if (typeof window !== 'undefined') {
-                const saved = localStorage.getItem('itime_tasks');
-                setTasks(saved ? JSON.parse(saved) : []);
-            }
-            setHasLoadedTasksOnce(true);
         }
+
+        // Load from localStorage for guest users
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('itime_tasks');
+            setTasks(saved ? JSON.parse(saved) : []);
+        }
+        setHasLoadedTasksOnce(true);
     }, [status]);
 
     const pauseMenuRef = useRef<HTMLDivElement>(null);
 
-    const [userProfile, setUserProfile] = useState<{ username?: string; image?: string }>({});
-    const [gamificationPoints, setGamificationPoints] = useState(0);
-    const [gamificationPointsLastUpdatedAt, setGamificationPointsLastUpdatedAt] = useState<string | null>(null);
-    const [githubPointsHistory, setGithubPointsHistory] = useState<GithubPointsSnapshot[] | null>(null);
-    const [chainPoints, setChainPoints] = useState(0);
-    const [chainPointsHistory, setChainPointsHistory] = useState<ChainPointsSnapshot[] | null>(null);
+    const [userProfile, setUserProfile] = useState<{ username?: string; image?: string }>(() =>
+        initialSettingsCache?.username ? { username: initialSettingsCache.username } : {}
+    );
+    const [gamificationPoints, setGamificationPoints] = useState<number>(() => initialSettingsCache?.points || 0);
+    const [gamificationPointsLastUpdatedAt, setGamificationPointsLastUpdatedAt] = useState<string | null>(() =>
+        initialSettingsCache?.githubPointsLastUpdatedAt || null
+    );
+    const [githubPointsHistory, setGithubPointsHistory] = useState<GithubPointsSnapshot[] | null>(() =>
+        Array.isArray(initialSettingsCache?.githubPointsHistory) ? initialSettingsCache!.githubPointsHistory! : null
+    );
+    const [chainPoints, setChainPoints] = useState<number>(() => initialSettingsCache?.chainPoints || 0);
+    const [chainPointsHistory, setChainPointsHistory] = useState<ChainPointsSnapshot[] | null>(() =>
+        Array.isArray(initialSettingsCache?.chainPointsHistory) ? initialSettingsCache!.chainPointsHistory! : null
+    );
 
     const fetchUserProfile = useCallback(async () => {
         try {
-            const res = await fetch('/api/user/settings');
-            const data = await res.json();
+            const data = await fetchWithCache<{
+                username?: string;
+                points?: number;
+                githubPointsLastUpdatedAt?: string | null;
+                githubPointsHistory?: GithubPointsSnapshot[] | null;
+                chainPoints?: number;
+                chainPointsHistory?: ChainPointsSnapshot[] | null;
+            }>('/api/user/settings', { dedupingIntervalMs: 5000 });
             if (data.username) {
                 setUserProfile(prev => ({ ...prev, username: data.username }));
             }
@@ -166,24 +194,28 @@ export default function ITimePage() {
         }
     }, []);
 
-    // Initial load
+    // Initial load — fire API fetches in parallel with NextAuth session resolution
     useEffect(() => {
-        if (status === 'loading') return;
-
-        setHasLoadedTasksOnce(false);
-        setHasLoadedProfileOnce(status !== 'authenticated');
-        if (status !== 'authenticated') {
+        if (status === 'unauthenticated') {
+            setHasLoadedProfileOnce(true);
             setGamificationPoints(0);
             setGamificationPointsLastUpdatedAt(null);
             setGithubPointsHistory(null);
             setChainPoints(0);
             setChainPointsHistory(null);
+            fetchTasks();
+            return;
+        }
+
+        if (!getCachedData('/api/itime')) {
+            setHasLoadedTasksOnce(false);
+        }
+        if (!getCachedData('/api/user/settings')) {
+            setHasLoadedProfileOnce(false);
         }
         fetchTasks();
-        if (status === 'authenticated' && session?.user?.email) {
-            fetchUserProfile();
-        }
-    }, [fetchTasks, fetchUserProfile, session?.user?.email, status]);
+        fetchUserProfile();
+    }, [fetchTasks, fetchUserProfile, status]);
 
     useEffect(() => {
         if (status !== 'authenticated' || !session?.user?.email) return;
@@ -233,11 +265,14 @@ export default function ITimePage() {
         return () => clearInterval(scoreTimer);
     }, []);
 
-    // Save tasks - MongoDB for authenticated, localStorage for guest
+    // Save tasks - client cache for authenticated, localStorage for guest
     useEffect(() => {
         if (!hasLoadedTasksOnce) return;
 
-        if (status === 'unauthenticated' && typeof window !== 'undefined') {
+        if (status === 'authenticated') {
+            setCachedData('/api/itime', { tasks });
+            invalidateCache('/api/workers');
+        } else if (status === 'unauthenticated' && typeof window !== 'undefined') {
             // Guest mode - save to localStorage
             localStorage.setItem('itime_tasks', JSON.stringify(tasks));
         }
@@ -565,8 +600,8 @@ export default function ITimePage() {
         return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     };
 
-    const tasksReady = status !== 'loading' && hasLoadedTasksOnce;
-    const scoreReady = tasksReady && (status !== 'authenticated' || hasLoadedProfileOnce);
+    const tasksReady = hasLoadedTasksOnce;
+    const scoreReady = tasksReady && (status === 'unauthenticated' || hasLoadedProfileOnce);
     const totalTime = useMemo(() => tasks.reduce((sum, task) => sum + getElapsedSeconds(task), 0), [tasks, getElapsedSeconds]);
     const liveScore = useMemo<number | null>(
         () => scoreReady

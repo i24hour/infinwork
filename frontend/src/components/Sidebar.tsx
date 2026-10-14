@@ -1,19 +1,27 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
+import {
+    fetchWithCache,
+    getCachedData,
+    getInitialIsLightTheme,
+    prefetchJson,
+    subscribeCache,
+} from '@/lib/client-cache';
 
-const navItems = [
-    { href: '/profile', label: 'Profile' },
-    { href: '/itime', label: 'iTime' },
-    { href: '/workers', label: 'WOrKers' },
-    { href: '/rank-politician', label: 'Rank Politician' },
-    { href: '/ideas', label: 'Ideas' },
-    { href: '/ichain', label: 'Chain' },
-    { href: '/sf-tracker', label: 'SF Tracker' },
-    { href: '/settings', label: 'Settings' },
+const navItems: Array<{ href: string; label: string; prefetchEndpoints?: string[] }> = [
+    { href: '/profile', label: 'Profile', prefetchEndpoints: ['/api/profile'] },
+    { href: '/itime', label: 'iTime', prefetchEndpoints: ['/api/itime', '/api/user/settings'] },
+    { href: '/workers', label: 'WOrKers', prefetchEndpoints: ['/api/workers'] },
+    { href: '/rank-politician', label: 'Rank Politician', prefetchEndpoints: ['/api/rank-politician?sortBy=netScore'] },
+    { href: '/ideas', label: 'Ideas', prefetchEndpoints: ['/api/ideas'] },
+    { href: '/ichain', label: 'Chain', prefetchEndpoints: ['/api/ichain'] },
+    { href: '/sf-tracker', label: 'SF Tracker', prefetchEndpoints: ['/api/sf-tracker'] },
+    { href: '/settings', label: 'Settings', prefetchEndpoints: ['/api/user/settings'] },
 ];
 
 export function Sidebar() {
@@ -21,17 +29,15 @@ export function Sidebar() {
     const router = useRouter();
     const { data: session, status } = useSession();
     const [isOpen, setIsOpen] = useState(false);
-    const [userProfile, setUserProfile] = useState<{ username?: string; image?: string }>({});
-    const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+    const [userProfile, setUserProfile] = useState<{ username?: string; image?: string }>(() => {
+        const cached = getCachedData<{ username?: string }>('/api/user/settings');
+        return cached?.username ? { username: cached.username } : {};
+    });
+    const [theme, setTheme] = useState<'dark' | 'light'>(() => (getInitialIsLightTheme() ? 'light' : 'dark'));
 
     useEffect(() => {
         setIsOpen(false);
     }, [pathname]);
-
-    useEffect(() => {
-        const savedTheme = typeof window !== 'undefined' ? localStorage.getItem('app-theme') : null;
-        setTheme(savedTheme === 'light' ? 'light' : 'dark');
-    }, []);
 
     useEffect(() => {
         if (theme === 'light') {
@@ -43,12 +49,28 @@ export function Sidebar() {
         }
     }, [theme]);
 
+    // Eagerly prefetch all top-level routes so SPA transitions are instant
+    useEffect(() => {
+        for (const item of navItems) {
+            router.prefetch(item.href);
+        }
+    }, [router]);
+
+    useEffect(() => {
+        return subscribeCache<{ username?: string }>('/api/user/settings', (data) => {
+            if (data?.username) {
+                setUserProfile((prev) => (prev.username === data.username ? prev : { ...prev, username: data.username }));
+            }
+        });
+    }, []);
+
     const fetchUserProfile = useCallback(async () => {
         try {
-            const res = await fetch('/api/user/settings');
-            const data = await res.json();
-            if (data.username) {
-                setUserProfile(prev => ({ ...prev, username: data.username }));
+            const data = await fetchWithCache<{ username?: string }>('/api/user/settings', {
+                dedupingIntervalMs: 5000,
+            });
+            if (data?.username) {
+                setUserProfile((prev) => (prev.username === data.username ? prev : { ...prev, username: data.username }));
             }
         } catch (err) {
             console.error('Error fetching profile in sidebar:', err);
@@ -77,6 +99,21 @@ export function Sidebar() {
             document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
     }, [fetchUserProfile, session?.user?.email]);
+
+    const handleWarmNav = useCallback((item: typeof navItems[number]) => {
+        router.prefetch(item.href);
+        if (!item.prefetchEndpoints) return;
+        for (const endpoint of item.prefetchEndpoints) {
+            // Only pre-warm auth-only endpoints when signed in
+            if (
+                (endpoint === '/api/profile' || endpoint === '/api/itime' || endpoint === '/api/user/settings' || endpoint === '/api/sf-tracker') &&
+                status !== 'authenticated'
+            ) {
+                continue;
+            }
+            prefetchJson(endpoint, 15000);
+        }
+    }, [router, status]);
 
     return (
         <>
@@ -137,19 +174,28 @@ export function Sidebar() {
                     {navItems.map((item) => {
                         const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
                         return (
-                            <LiquidButton
+                            <Link
                                 key={item.href}
-                                onClick={() => router.push(item.href)}
-                                className={`w-full justify-start text-left px-5 py-3 rounded-full transition-all duration-300 ${isActive
-                                    ? 'shadow-[0_0_15px_rgba(255,255,255,0.3)] border border-white/20 text-white bg-white/5'
-                                    : theme === 'light'
-                                        ? 'text-zinc-600 border border-transparent hover:text-black hover:bg-black/5'
-                                        : 'text-zinc-400 border border-transparent hover:text-white hover:bg-black'
-                                    }`}
-                                variant="default"
+                                href={item.href}
+                                prefetch={true}
+                                onMouseEnter={() => handleWarmNav(item)}
+                                onFocus={() => handleWarmNav(item)}
+                                onTouchStart={() => handleWarmNav(item)}
+                                className="block w-full"
                             >
-                                <span className="font-medium text-sm flex-1">{item.label}</span>
-                            </LiquidButton>
+                                <LiquidButton
+                                    type="button"
+                                    className={`w-full justify-start text-left px-5 py-3 rounded-full transition-all duration-300 ${isActive
+                                        ? 'shadow-[0_0_15px_rgba(255,255,255,0.3)] border border-white/20 text-white bg-white/5'
+                                        : theme === 'light'
+                                            ? 'text-zinc-600 border border-transparent hover:text-black hover:bg-black/5'
+                                            : 'text-zinc-400 border border-transparent hover:text-white hover:bg-black'
+                                        }`}
+                                    variant="default"
+                                >
+                                    <span className="font-medium text-sm flex-1">{item.label}</span>
+                                </LiquidButton>
+                            </Link>
                         );
                     })}
                 </nav>

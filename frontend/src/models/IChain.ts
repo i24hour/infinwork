@@ -59,4 +59,8 @@ const ChainSchema = new mongoose.Schema({
     timestamps: true,
 });
 
+ChainSchema.index({ 'members.userId': 1 });
+ChainSchema.index({ maxTime: -1, createdAt: -1 });
+ChainSchema.index({ status: 1 });
+
 export default mongoose.models.Chain || mongoose.model('Chain', ChainSchema);

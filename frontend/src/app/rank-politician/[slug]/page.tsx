@@ -15,9 +15,15 @@ import {
     scrapeStatusClass,
     scrapeStatusLabel,
 } from '@/lib/rank-politician/ui';
+import {
+    fetchWithCache,
+    getCachedData,
+    getInitialIsLightTheme,
+    invalidateCache,
+} from '@/lib/client-cache';
 
 function useIsLightTheme() {
-    const [isLightTheme, setIsLightTheme] = useState(false);
+    const [isLightTheme, setIsLightTheme] = useState<boolean>(() => getInitialIsLightTheme());
 
     useEffect(() => {
         const root = document.documentElement;
@@ -77,37 +83,47 @@ export default function RankPoliticianDetailPage() {
     const isLightTheme = useIsLightTheme();
     const { data: session, status: authStatus } = useSession();
 
-    const [isAdmin, setIsAdmin] = useState(false);
-    const [politician, setPolitician] = useState<PoliticianDetail | null>(null);
-    const [posts, setPosts] = useState<ScoredPost[]>([]);
+    const detailUrl = slug ? `/api/rank-politician/${encodeURIComponent(slug)}` : '';
+    const initialCached = detailUrl
+        ? getCachedData<{ politician?: PoliticianDetail; posts?: ScoredPost[] }>(detailUrl)
+        : undefined;
+    const initialSettings = getCachedData<{ isAdmin?: boolean }>('/api/user/settings');
+
+    const [isAdmin, setIsAdmin] = useState<boolean>(() => Boolean(initialSettings?.isAdmin));
+    const [politician, setPolitician] = useState<PoliticianDetail | null>(() => initialCached?.politician || null);
+    const [posts, setPosts] = useState<ScoredPost[]>(() => initialCached?.posts || []);
     const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState<boolean>(() => !initialCached?.politician);
     const [error, setError] = useState<string | null>(null);
     const [scrapeLoading, setScrapeLoading] = useState(false);
     const [actionMessage, setActionMessage] = useState<string | null>(null);
 
-    const fetchDetail = useCallback(async () => {
+    const fetchDetail = useCallback(async (force: boolean = false) => {
         if (!slug) return;
+        const url = `/api/rank-politician/${encodeURIComponent(slug)}`;
         try {
             setError(null);
-            const response = await fetch(`/api/rank-politician/${encodeURIComponent(slug)}`);
-            if (response.status === 404) throw new Error('Politician not found');
-            if (!response.ok) throw new Error('Failed to fetch politician');
-            const data = await response.json();
+            const data = await fetchWithCache<{ politician: PoliticianDetail; posts?: ScoredPost[] }>(url, {
+                dedupingIntervalMs: 5000,
+                force,
+            });
             setPolitician(data.politician);
             setPosts(data.posts || []);
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error('Error fetching politician detail:', err);
-            setError(err.message || 'Error fetching data');
+            const message = err instanceof Error ? err.message : 'Error fetching data';
+            setError(message);
         } finally {
             setLoading(false);
         }
     }, [slug]);
 
     useEffect(() => {
-        setLoading(true);
+        if (!detailUrl || !getCachedData(detailUrl)) {
+            setLoading(true);
+        }
         fetchDetail();
-    }, [fetchDetail]);
+    }, [detailUrl, fetchDetail]);
 
     useEffect(() => {
         if (authStatus !== 'authenticated' || !session?.user?.email) {
@@ -118,9 +134,9 @@ export default function RankPoliticianDetailPage() {
         let cancelled = false;
         (async () => {
             try {
-                const res = await fetch('/api/user/settings');
-                if (!res.ok) return;
-                const data = await res.json();
+                const data = await fetchWithCache<{ isAdmin?: boolean }>('/api/user/settings', {
+                    dedupingIntervalMs: 5000,
+                });
                 if (!cancelled) setIsAdmin(Boolean(data.isAdmin));
             } catch {
                 if (!cancelled) setIsAdmin(false);
@@ -171,7 +187,8 @@ export default function RankPoliticianDetailPage() {
                           (result.error ? ` (${result.error})` : '')
                     : 'Scrape finished'
             );
-            await fetchDetail();
+            invalidateCache('/api/rank-politician');
+            await fetchDetail(true);
         } catch (err: any) {
             setActionMessage(err.message || 'Scrape failed');
         } finally {
@@ -201,7 +218,7 @@ export default function RankPoliticianDetailPage() {
                             <p className="text-white">Couldn&apos;t load this politician.</p>
                             <p className={`text-sm ${muted}`}>{error}</p>
                             <div className="flex gap-3">
-                                <LiquidButton onClick={fetchDetail} className="px-4 py-2 text-white">
+                                <LiquidButton onClick={() => fetchDetail(true)} className="px-4 py-2 text-white">
                                     Retry
                                 </LiquidButton>
                                 <Link href="/rank-politician">
