@@ -12,6 +12,10 @@ on:
         required: false
         default: '8'
 
+concurrency:
+  group: rank-politician-cron
+  cancel-in-progress: false
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
