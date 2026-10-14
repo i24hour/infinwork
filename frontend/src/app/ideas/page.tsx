@@ -6,6 +6,7 @@ import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
+import { fetchWithCache, getCachedData, setCachedData } from '@/lib/client-cache';
 
 interface Idea {
     _id: string;
@@ -19,8 +20,9 @@ interface Idea {
 export default function IdeasPage() {
     const { data: session } = useSession();
     const router = useRouter();
-    const [ideas, setIdeas] = useState<Idea[]>([]);
-    const [loading, setLoading] = useState(true);
+    const initialCached = getCachedData<{ ideas?: Idea[] }>('/api/ideas');
+    const [ideas, setIdeas] = useState<Idea[]>(() => initialCached?.ideas || []);
+    const [loading, setLoading] = useState<boolean>(() => !initialCached);
     const [formOpen, setFormOpen] = useState(false);
     const [title, setTitle] = useState('');
     const [details, setDetails] = useState('');
@@ -40,8 +42,9 @@ export default function IdeasPage() {
 
     const fetchIdeas = async () => {
         try {
-            const res = await fetch('/api/ideas');
-            const data = await res.json();
+            const data = await fetchWithCache<{ ideas?: Idea[] }>('/api/ideas', {
+                dedupingIntervalMs: 2000,
+            });
             if (data.ideas) setIdeas(data.ideas);
         } catch (err) {
             console.error('Failed to fetch ideas:', err);
@@ -61,7 +64,11 @@ export default function IdeasPage() {
             });
             if (!res.ok) throw new Error('Failed');
             const data = await res.json();
-            setIdeas(prev => [data.idea, ...prev]);
+            setIdeas(prev => {
+                const next = [data.idea, ...prev];
+                setCachedData('/api/ideas', { ideas: next });
+                return next;
+            });
             setTitle('');
             setDetails('');
             setIsPublic(true);
@@ -76,19 +83,37 @@ export default function IdeasPage() {
     const handleToggleVisibility = async (idea: Idea) => {
         if (togglingId) return;
         setTogglingId(idea._id);
-        setIdeas(prev => prev.map(i => i._id === idea._id ? { ...i, isPublic: !i.isPublic } : i));
+        setIdeas(prev => {
+            const next = prev.map(i => i._id === idea._id ? { ...i, isPublic: !i.isPublic } : i);
+            setCachedData('/api/ideas', { ideas: next });
+            return next;
+        });
         try {
             const res = await fetch(`/api/ideas/${idea._id}`, { method: 'PATCH' });
-            if (!res.ok) setIdeas(prev => prev.map(i => i._id === idea._id ? { ...i, isPublic: idea.isPublic } : i));
+            if (!res.ok) {
+                setIdeas(prev => {
+                    const next = prev.map(i => i._id === idea._id ? { ...i, isPublic: idea.isPublic } : i);
+                    setCachedData('/api/ideas', { ideas: next });
+                    return next;
+                });
+            }
         } catch {
-            setIdeas(prev => prev.map(i => i._id === idea._id ? { ...i, isPublic: idea.isPublic } : i));
+            setIdeas(prev => {
+                const next = prev.map(i => i._id === idea._id ? { ...i, isPublic: idea.isPublic } : i);
+                setCachedData('/api/ideas', { ideas: next });
+                return next;
+            });
         } finally {
             setTogglingId(null);
         }
     };
 
     const handleDelete = async (ideaId: string) => {
-        setIdeas(prev => prev.filter(i => i._id !== ideaId));
+        setIdeas(prev => {
+            const next = prev.filter(i => i._id !== ideaId);
+            setCachedData('/api/ideas', { ideas: next });
+            return next;
+        });
         try {
             await fetch(`/api/ideas/${ideaId}`, { method: 'DELETE' });
         } catch {

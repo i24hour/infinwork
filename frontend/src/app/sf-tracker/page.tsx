@@ -6,6 +6,13 @@ import { Sidebar } from '@/components/Sidebar';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import Link from 'next/link';
+import {
+    fetchWithCache,
+    getCachedData,
+    invalidateCache,
+    prefetchJson,
+    setCachedData,
+} from '@/lib/client-cache';
 
 interface SFTrackerItem {
     _id: string;
@@ -27,9 +34,11 @@ interface SFLeaderboardUser {
 
 export default function SFTrackerPage() {
     const { data: session } = useSession();
-    const [targets, setTargets] = useState<SFTrackerItem[]>([]);
-    const [leaderboard, setLeaderboard] = useState<SFLeaderboardUser[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const initialTargets = getCachedData<{ targets?: SFTrackerItem[] }>('/api/sf-tracker');
+    const initialLeaderboard = getCachedData<{ leaderboard?: SFLeaderboardUser[] }>('/api/sf-tracker/all');
+    const [targets, setTargets] = useState<SFTrackerItem[]>(() => initialTargets?.targets || []);
+    const [leaderboard, setLeaderboard] = useState<SFLeaderboardUser[]>(() => initialLeaderboard?.leaderboard || []);
+    const [isLoading, setIsLoading] = useState<boolean>(() => !initialTargets);
     const [isLeaderboardLoading, setIsLeaderboardLoading] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [activeTab, setActiveTab] = useState<'my' | 'all'>('my');
@@ -50,16 +59,19 @@ export default function SFTrackerPage() {
     }, [session]);
 
     useEffect(() => {
-        if (activeTab === 'all' && leaderboard.length === 0) {
+        if (activeTab === 'all') {
             fetchLeaderboard();
         }
     }, [activeTab]);
 
     const fetchLeaderboard = async () => {
-        setIsLeaderboardLoading(true);
+        if (leaderboard.length === 0 && !getCachedData('/api/sf-tracker/all')) {
+            setIsLeaderboardLoading(true);
+        }
         try {
-            const res = await fetch('/api/sf-tracker/all');
-            const data = await res.json();
+            const data = await fetchWithCache<{ leaderboard?: SFLeaderboardUser[] }>('/api/sf-tracker/all', {
+                dedupingIntervalMs: 3000,
+            });
             if (data.leaderboard) {
                 setLeaderboard(data.leaderboard);
             }
@@ -72,8 +84,9 @@ export default function SFTrackerPage() {
 
     const fetchTargets = async () => {
         try {
-            const res = await fetch('/api/sf-tracker');
-            const data = await res.json();
+            const data = await fetchWithCache<{ targets?: SFTrackerItem[] }>('/api/sf-tracker', {
+                dedupingIntervalMs: 2000,
+            });
             if (data.targets) {
                 setTargets(data.targets);
             }
@@ -97,7 +110,10 @@ export default function SFTrackerPage() {
             });
             const data = await res.json();
             if (data.target) {
-                setTargets([data.target, ...targets]);
+                const next = [data.target, ...targets];
+                setTargets(next);
+                setCachedData('/api/sf-tracker', { targets: next });
+                invalidateCache('/api/sf-tracker/all');
                 setNewTarget('');
                 setNewCondition('');
             }
@@ -116,7 +132,10 @@ export default function SFTrackerPage() {
                 body: JSON.stringify({ status: 'Success' }),
             });
             if (res.ok) {
-                setTargets(targets.map(t => t._id === id ? { ...t, status: 'Success' } : t));
+                const next = targets.map(t => t._id === id ? { ...t, status: 'Success' as const } : t);
+                setTargets(next);
+                setCachedData('/api/sf-tracker', { targets: next });
+                invalidateCache('/api/sf-tracker/all');
             }
         } catch (error) {
             console.error('Failed to mark success:', error);
@@ -140,9 +159,12 @@ export default function SFTrackerPage() {
                 body: JSON.stringify({ status: 'Failure', failureReason: failureReason }),
             });
             if (res.ok) {
-                setTargets(targets.map(t => 
-                    t._id === failingTargetId ? { ...t, status: 'Failure', failureReason: failureReason } : t
-                ));
+                const next = targets.map(t => 
+                    t._id === failingTargetId ? { ...t, status: 'Failure' as const, failureReason: failureReason } : t
+                );
+                setTargets(next);
+                setCachedData('/api/sf-tracker', { targets: next });
+                invalidateCache('/api/sf-tracker/all');
                 setFailureModalOpen(false);
             }
         } catch (error) {
@@ -157,7 +179,10 @@ export default function SFTrackerPage() {
         try {
             const res = await fetch(`/api/sf-tracker/${id}`, { method: 'DELETE' });
             if (res.ok) {
-                setTargets(targets.filter(t => t._id !== id));
+                const next = targets.filter(t => t._id !== id);
+                setTargets(next);
+                setCachedData('/api/sf-tracker', { targets: next });
+                invalidateCache('/api/sf-tracker/all');
             }
         } catch (error) {
             console.error('Failed to delete target:', error);
@@ -195,6 +220,7 @@ export default function SFTrackerPage() {
                             </button>
                             <button
                                 onClick={() => setActiveTab('all')}
+                                onMouseEnter={() => prefetchJson('/api/sf-tracker/all', 15000)}
                                 className={`relative z-10 px-8 py-2.5 rounded-full text-sm font-bold tracking-wide transition-colors ${activeTab === 'all' ? 'text-black' : 'text-zinc-400 hover:text-white'}`}
                             >
                                 All SF

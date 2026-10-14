@@ -27,6 +27,9 @@ const sfTrackerSchema = new mongoose.Schema({
     timestamps: true,
 });
 
+sfTrackerSchema.index({ userId: 1, createdAt: -1 });
+sfTrackerSchema.index({ status: 1, userId: 1 });
+
 const SFTracker = mongoose.models.SFTracker || mongoose.model('SFTracker', sfTrackerSchema);
 
 export default SFTracker;

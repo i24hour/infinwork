@@ -16,15 +16,22 @@ export async function GET() {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
+        const email = session.user.email;
         await connectDB();
-        try {
-            await syncGithubForUserByEmail(session.user.email);
-        } catch (syncError) {
+
+        // Trigger GitHub auto-sync asynchronously so settings/sidebar reads never block on external GraphQL calls
+        syncGithubForUserByEmail(email).catch((syncError) => {
             console.error('GitHub auto-sync failed in settings route:', syncError);
-        }
-        await recomputeChainPointsForUsers([session.user.email]);
-        const user = await ensureUserHasDefaultUsername(session.user.email);
-        const tasks = await ITimeTask.find({ userId: session.user.email }).lean();
+        });
+
+        const [, user, tasks] = await Promise.all([
+            recomputeChainPointsForUsers([email]),
+            ensureUserHasDefaultUsername(email),
+            ITimeTask.find({ userId: email })
+                .select('startTime pausedElapsed enabled completed completedAt events')
+                .lean(),
+        ]);
+
         const scoreBreakdown = getScoreBreakdownAtTime(
             tasks,
             Date.now(),
@@ -37,7 +44,7 @@ export async function GET() {
 
         return NextResponse.json({ 
             username: user?.username || '', 
-            email: session.user.email,
+            email,
             isAdmin: Boolean(user?.isAdmin),
             points: scoreBreakdown.githubPoints,
             chainPoints: scoreBreakdown.chainPoints,

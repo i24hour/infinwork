@@ -90,5 +90,7 @@ const ITimeTaskSchema = new mongoose.Schema<ITimeTask>({
 
 // Index for faster queries
 ITimeTaskSchema.index({ userId: 1, completed: 1, createdAt: -1 });
+ITimeTaskSchema.index({ enabled: 1, completed: 1 });
+ITimeTaskSchema.index({ isPublic: 1, userId: 1 });
 
 export default mongoose.models.ITimeTask || mongoose.model<ITimeTask>('ITimeTask', ITimeTaskSchema);

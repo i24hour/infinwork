@@ -3,6 +3,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createChart, ColorType, CandlestickSeries, BaselineSeries, type IChartApi, type ISeriesApi, type CandlestickData, type LineData, type BaselineData, type Time, LineStyle } from 'lightweight-charts';
 import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } from '@/lib/score';
+import { getInitialIsLightTheme } from '@/lib/client-cache';
 
 export interface ChartEvent {
     type: 'start' | 'pause' | 'complete';
@@ -403,7 +404,7 @@ export function PerformanceChart({
 }: PerformanceChartProps) {
     const [chartType, setChartType] = useState<ChartType>('daily');
     const [interval, setIntervalVal] = useState<CandleInterval>('15m');
-    const [isLightTheme, setIsLightTheme] = useState(false);
+    const [isLightTheme, setIsLightTheme] = useState<boolean>(() => getInitialIsLightTheme());
     const [referenceNow, setReferenceNow] = useState(() => Date.now());
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const dailyPanelRef = useRef<HTMLDivElement>(null);
@@ -466,8 +467,15 @@ export function PerformanceChart({
         return getScoreAtTime(tasks, previousCloseTimestamp, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory);
     }, [tasks, previousCloseTimestamp, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory]);
 
-    // Generate OHLC data
+    // Generate OHLC data (only computed when Line or Candle view is active)
     const chartData = useMemo(() => {
+        if (chartType === 'daily') {
+            return {
+                candleData: [] as CandlestickData[],
+                lineData: [] as LineData[],
+                baselineData: [] as BaselineData[],
+            };
+        }
         const now = Date.now();
         let intervalMs = getIntervalMs(interval);
         const snappedNow = snapToInterval(now, interval);
@@ -540,7 +548,7 @@ export function PerformanceChart({
         }
 
         return { candleData, lineData, baselineData };
-    }, [tasks, interval, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory]);
+    }, [chartType, tasks, interval, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory]);
 
     const dailyScoreData = useMemo(() => {
         const now = Date.now();
@@ -550,13 +558,30 @@ export function PerformanceChart({
         const gridStart = firstVisibleDay - (firstDayOfWeek * DAY_MS);
         const rawDays: DailyScoreDay[] = [];
 
-        for (let dayStart = gridStart; dayStart <= todayStart; dayStart += DAY_MS) {
-            if (dayStart < firstVisibleDay) continue;
+        // Since each dayStart + DAY_MS equals the next day's dayStart, compute each boundary once
+        let startScore = getScoreAtTime(
+            tasks,
+            firstVisibleDay,
+            gamificationPoints,
+            gamificationPointsLastUpdatedAt,
+            githubPointsHistory,
+            chainPoints,
+            chainPointsHistory
+        );
 
+        for (let dayStart = firstVisibleDay; dayStart <= todayStart; dayStart += DAY_MS) {
             const dayEnd = Math.min(dayStart + DAY_MS, now);
-            const startScore = getScoreAtTime(tasks, dayStart, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory);
-            const endScore = getScoreAtTime(tasks, dayEnd, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory);
+            const endScore = getScoreAtTime(
+                tasks,
+                dayEnd,
+                gamificationPoints,
+                gamificationPointsLastUpdatedAt,
+                githubPointsHistory,
+                chainPoints,
+                chainPointsHistory
+            );
             const value = Math.round((endScore - startScore) * 100) / 100;
+            startScore = endScore;
             const istDate = new Date(dayStart + IST_OFFSET_MS);
 
             rawDays.push({

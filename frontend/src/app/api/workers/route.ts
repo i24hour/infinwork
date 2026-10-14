@@ -9,43 +9,61 @@ import { autoCancelExpiredActiveTasks } from '@/lib/itime-runtime';
 
 export const dynamic = 'force-dynamic';
 
+const WORKERS_CACHE_TTL_MS = 3000;
+const AUTO_CANCEL_MIN_INTERVAL_MS = 15000;
+
+let cachedWorkersPayload: { workers: unknown[]; totalSignup: number; expiresAt: number } | null = null;
+let lastAutoCancelCheckAt = 0;
+
 export async function GET() {
     try {
         const session = await getServerSession(authOptions);
 
-        if (!session?.user?.email) {
-            // For safety, only allow logged-in users to view the workers list
-            // temporarily allowing access for preview purposes
-            // return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-            console.log("No session found in /api/workers, bypassing for preview");
+        // Trigger background GitHub sync without blocking the leaderboard HTTP response
+        if (session?.user?.email) {
+            const email = session.user.email;
+            connectDB()
+                .then(() => syncGithubForUserByEmail(email))
+                .catch((syncError) => {
+                    console.error('GitHub auto-sync failed in workers route:', syncError);
+                });
+        }
+
+        const now = Date.now();
+        if (cachedWorkersPayload && cachedWorkersPayload.expiresAt > now) {
+            return NextResponse.json({
+                workers: cachedWorkersPayload.workers,
+                totalSignup: cachedWorkersPayload.totalSignup,
+            });
         }
 
         await connectDB();
-        await autoCancelExpiredActiveTasks();
 
-        if (session?.user?.email) {
-            try {
-                await syncGithubForUserByEmail(session.user.email);
-            } catch (syncError) {
-                console.error('GitHub auto-sync failed in workers route:', syncError);
-            }
+        if (now - lastAutoCancelCheckAt >= AUTO_CANCEL_MIN_INTERVAL_MS) {
+            lastAutoCancelCheckAt = now;
+            await autoCancelExpiredActiveTasks();
         }
 
-        // Fetch all tasks (public + private) so score matches personal iTime view
-        const allTasks = await ITimeTask.find({}).lean() as any[];
+        // Project only the fields needed for leaderboard scoring and stats
+        const [allTasks, initialUsers] = await Promise.all([
+            ITimeTask.find({})
+                .select('userId startTime pausedElapsed enabled completed completedAt cancelledAt events updatedAt isPublic')
+                .lean() as Promise<any[]>,
+            User.find({})
+                .select('email username image points githubPointsLastUpdatedAt githubConnectedAt githubPointsHistory chainPoints chainPointsHistory')
+                .lean() as Promise<any[]>,
+        ]);
 
-        // Fetch all users to map emails to usernames
-        let allUsers = await User.find().lean() as any[];
-        
+        let allUsers = initialUsers;
+
         // --- START LAZY REGISTRATION ---
-        // If some users are missing from the User collection but have tasks, 
+        // If some users are missing from the User collection but have tasks,
         // they won't be counted in totalSignup. Let's fix this once here.
-        const taskUserEmails = [...new Set(allTasks.map(t => t.userId))];
-        const existingUserEmails = new Set(allUsers.map(u => u.email));
-        
-        const missingEmails = taskUserEmails.filter(email => !existingUserEmails.has(email));
+        const taskUserEmails = [...new Set(allTasks.map((t) => t.userId))];
+        const existingUserEmails = new Set(allUsers.map((u) => u.email));
+
+        const missingEmails = taskUserEmails.filter((email) => !existingUserEmails.has(email));
         if (missingEmails.length > 0) {
-            console.log(`[DEBUG_LOG] Found ${missingEmails.length} missing users in User collection. Registering them now...`);
             for (const email of missingEmails) {
                 try {
                     await User.findOneAndUpdate(
@@ -57,13 +75,14 @@ export async function GET() {
                     console.error(`Error lazy-registering user ${email}:`, e);
                 }
             }
-            // Refresh allUsers list after lazy registration
-            allUsers = await User.find().lean() as any[];
+            allUsers = await User.find({})
+                .select('email username image points githubPointsLastUpdatedAt githubConnectedAt githubPointsHistory chainPoints chainPointsHistory')
+                .lean() as any[];
         }
         // --- END LAZY REGISTRATION ---
 
         const emailToUserMap = new Map();
-        allUsers.forEach(u => {
+        allUsers.forEach((u) => {
             emailToUserMap.set(u.email, {
                 username: u.username,
                 image: u.image,
@@ -71,11 +90,10 @@ export async function GET() {
                 githubPointsLastUpdatedAt: u.githubPointsLastUpdatedAt || u.githubConnectedAt || null,
                 githubPointsHistory: u.githubPointsHistory || [],
                 chainPoints: u.chainPoints || 0,
-                chainPointsHistory: u.chainPointsHistory || []
+                chainPointsHistory: u.chainPointsHistory || [],
             });
         });
 
-        const now = Date.now();
         const userStatsMap = new Map<string, any>();
 
         for (const task of allTasks) {
@@ -97,7 +115,7 @@ export async function GET() {
                     gamificationPointsLastUpdatedAt: userData?.githubPointsLastUpdatedAt || null,
                     githubPointsHistory: userData?.githubPointsHistory || [],
                     chainPoints: userData?.chainPoints || 0,
-                    chainPointsHistory: userData?.chainPointsHistory || []
+                    chainPointsHistory: userData?.chainPointsHistory || [],
                 });
             }
 
@@ -156,32 +174,31 @@ export async function GET() {
         }
 
         // Calculate Rank Score and convert to array
-        const workers = Array.from(userStatsMap.values()).map(w => {
-            // Rank Score = completedTasks / AllTime
-            // Multiply by a factor (e.g. 10000) to make it a readable non-decimal number if desired, 
-            // but we'll stick to the strict completedTasks / allTimeSeconds value for math sorting
+        const workers = Array.from(userStatsMap.values()).map((w) => {
             let rankScore = 0;
             if (w.allTimeSeconds > 0) {
                 rankScore = w.completedTasks / w.allTimeSeconds;
             } else if (w.completedTasks > 0) {
-                // Edge case where time was zero but complete (instant complete)
                 rankScore = w.completedTasks;
             }
 
             return {
                 ...w,
-                rankScore
+                rankScore,
             };
         });
 
         // Sort by Rank Score descending
         workers.sort((a, b) => b.rankScore - a.rankScore);
 
-        const totalSignup = await User.countDocuments();
-        console.log(`[DEBUG_LOG] API /api/workers - totalSignup count from DB: ${totalSignup}`);
-        
-        // Return only users that have tasks, or include all users in the ranking?
-        // To maintain existing behavior of showing a list of workers with stats:
+        const totalSignup = allUsers.length;
+
+        cachedWorkersPayload = {
+            workers,
+            totalSignup,
+            expiresAt: Date.now() + WORKERS_CACHE_TTL_MS,
+        };
+
         return NextResponse.json({ workers, totalSignup });
     } catch (error) {
         console.error('Error fetching workers:', error);

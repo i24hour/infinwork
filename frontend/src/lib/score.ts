@@ -29,8 +29,60 @@ export interface BonusPointsSnapshot {
 export type GithubPointsSnapshot = BonusPointsSnapshot;
 export type ChainPointsSnapshot = BonusPointsSnapshot;
 
+interface NormalizedSnapshot {
+    timestamp: number;
+    points: number;
+}
+
+const normalizedHistoryCache = new WeakMap<readonly BonusPointsSnapshot[], NormalizedSnapshot[]>();
+const syntheticEventsCache = new WeakMap<ScoreTask, ScoreEvent[]>();
+const actualCompletedAtCache = new WeakMap<ScoreTask, number | undefined>();
+
 function roundScore(value: number): number {
     return Math.round(value * 100) / 100;
+}
+
+function getActualCompletedAt(task: ScoreTask): number | undefined {
+    if (actualCompletedAtCache.has(task)) {
+        return actualCompletedAtCache.get(task);
+    }
+
+    let actualCompletedAt = task.completedAt;
+    if (!actualCompletedAt && task.events?.length) {
+        for (let i = task.events.length - 1; i >= 0; i--) {
+            if (task.events[i].type === 'complete') {
+                actualCompletedAt = task.events[i].timestamp;
+                break;
+            }
+        }
+    }
+    if (task.completed && !actualCompletedAt && (!task.events || task.events.length === 0)) {
+        actualCompletedAt = task.startTime + (task.pausedElapsed * 1000);
+    }
+
+    actualCompletedAtCache.set(task, actualCompletedAt);
+    return actualCompletedAt;
+}
+
+function getSyntheticEvents(task: ScoreTask): ScoreEvent[] | null {
+    if (!task.events || task.events.length === 0) {
+        return null;
+    }
+
+    const cached = syntheticEventsCache.get(task);
+    if (cached) {
+        return cached;
+    }
+
+    let syntheticEvents: ScoreEvent[];
+    if (task.events[0].type !== 'start' && task.startTime && task.startTime < task.events[0].timestamp) {
+        syntheticEvents = [{ type: 'start', timestamp: task.startTime }, ...task.events];
+    } else {
+        syntheticEvents = task.events;
+    }
+
+    syntheticEventsCache.set(task, syntheticEvents);
+    return syntheticEvents;
 }
 
 export function computeBaseScore(tasks: ScoreTask[], t: number): number {
@@ -45,21 +97,12 @@ export function computeBaseScore(tasks: ScoreTask[], t: number): number {
 
         totalTasks++;
 
-        let actualCompletedAt = task.completedAt;
-        if (!actualCompletedAt && task.events?.length) {
-            const completionEvent = [...task.events].reverse().find((event) => event.type === 'complete');
-            if (completionEvent) {
-                actualCompletedAt = completionEvent.timestamp;
-            }
-        }
-        if (task.completed && !actualCompletedAt && (!task.events || task.events.length === 0)) {
-            actualCompletedAt = task.startTime + (task.pausedElapsed * 1000);
-        }
-
+        const actualCompletedAt = getActualCompletedAt(task);
         const isCompletedByT = !!(task.completed && actualCompletedAt && actualCompletedAt <= t);
 
         let taskHours = 0;
-        if (!task.events || task.events.length === 0) {
+        const syntheticEvents = getSyntheticEvents(task);
+        if (!syntheticEvents) {
             if (task.startTime && task.startTime <= t) {
                 if (isCompletedByT) {
                     const completedAtMs = actualCompletedAt ?? task.startTime;
@@ -71,11 +114,6 @@ export function computeBaseScore(tasks: ScoreTask[], t: number): number {
                 }
             }
         } else {
-            const syntheticEvents = [...task.events];
-            if (syntheticEvents[0].type !== 'start' && task.startTime && task.startTime < syntheticEvents[0].timestamp) {
-                syntheticEvents.unshift({ type: 'start', timestamp: task.startTime });
-            }
-
             let taskActiveMs = 0;
             let isRunning = false;
             let lastStartTime = 0;
@@ -132,20 +170,11 @@ function getAllActiveIntervals(tasks: ScoreTask[], t: number) {
         const taskStartTime = task.events?.[0]?.timestamp ?? task.startTime;
         if (!taskStartTime || taskStartTime > t) continue;
 
-        let actualCompletedAt = task.completedAt;
-        if (!actualCompletedAt && task.events?.length) {
-            const completionEvent = [...task.events].reverse().find((event) => event.type === 'complete');
-            if (completionEvent) {
-                actualCompletedAt = completionEvent.timestamp;
-            }
-        }
-        if (task.completed && !actualCompletedAt && (!task.events || task.events.length === 0)) {
-            actualCompletedAt = task.startTime + (task.pausedElapsed * 1000);
-        }
-
+        const actualCompletedAt = getActualCompletedAt(task);
         const isCompletedByT = !!(task.completed && actualCompletedAt && actualCompletedAt <= t);
 
-        if (!task.events || task.events.length === 0) {
+        const syntheticEvents = getSyntheticEvents(task);
+        if (!syntheticEvents) {
             if (task.startTime && task.startTime <= t) {
                 if (isCompletedByT) {
                     const completedAtMs = actualCompletedAt ?? task.startTime;
@@ -157,11 +186,6 @@ function getAllActiveIntervals(tasks: ScoreTask[], t: number) {
                 }
             }
         } else {
-            const syntheticEvents = [...task.events];
-            if (syntheticEvents[0].type !== 'start' && task.startTime && task.startTime < syntheticEvents[0].timestamp) {
-                syntheticEvents.unshift({ type: 'start', timestamp: task.startTime });
-            }
-
             let isRunning = false;
             let lastStartTime = 0;
 
@@ -189,6 +213,42 @@ function getAllActiveIntervals(tasks: ScoreTask[], t: number) {
     return allIntervals;
 }
 
+function getNormalizedHistory(history: readonly BonusPointsSnapshot[]): NormalizedSnapshot[] {
+    const cached = normalizedHistoryCache.get(history);
+    if (cached) {
+        return cached;
+    }
+
+    const normalized: NormalizedSnapshot[] = [];
+    let isSorted = true;
+    let prevTimestamp = Number.NEGATIVE_INFINITY;
+
+    for (const entry of history) {
+        const rawTimestamp = entry?.timestamp;
+        const timestamp = rawTimestamp instanceof Date
+            ? rawTimestamp.getTime()
+            : typeof rawTimestamp === 'number'
+                ? rawTimestamp
+                : new Date(rawTimestamp).getTime();
+
+        if (!Number.isFinite(timestamp)) continue;
+        const points = Math.max(0, Math.round(Number(entry?.points || 0)));
+
+        if (timestamp < prevTimestamp) {
+            isSorted = false;
+        }
+        prevTimestamp = timestamp;
+        normalized.push({ timestamp, points });
+    }
+
+    if (!isSorted) {
+        normalized.sort((a, b) => a.timestamp - b.timestamp);
+    }
+
+    normalizedHistoryCache.set(history, normalized);
+    return normalized;
+}
+
 function getGithubPointsFromHistoryAtTime(
     t: number,
     history?: BonusPointsSnapshot[] | null
@@ -197,34 +257,27 @@ function getGithubPointsFromHistoryAtTime(
         return null;
     }
 
-    const normalized = history
-        .map((entry) => {
-            const rawTimestamp = entry?.timestamp;
-            const timestamp = rawTimestamp instanceof Date
-                ? rawTimestamp.getTime()
-                : typeof rawTimestamp === 'number'
-                    ? rawTimestamp
-                    : new Date(rawTimestamp).getTime();
-
-            const points = Math.max(0, Math.round(Number(entry?.points || 0)));
-            if (!Number.isFinite(timestamp)) return null;
-
-            return { timestamp, points };
-        })
-        .filter((entry): entry is { timestamp: number; points: number } => !!entry)
-        .sort((a, b) => a.timestamp - b.timestamp);
-
+    const normalized = getNormalizedHistory(history);
     if (normalized.length === 0) {
         return null;
     }
 
-    let effectivePoints = 0;
-    for (const snapshot of normalized) {
-        if (snapshot.timestamp > t) break;
-        effectivePoints = snapshot.points;
+    // Binary search for the last snapshot with timestamp <= t
+    let lo = 0;
+    let hi = normalized.length - 1;
+    let bestIdx = -1;
+
+    while (lo <= hi) {
+        const mid = (lo + hi) >>> 1;
+        if (normalized[mid].timestamp <= t) {
+            bestIdx = mid;
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
     }
 
-    return effectivePoints;
+    return bestIdx >= 0 ? normalized[bestIdx].points : 0;
 }
 
 function getGithubPointsAtTime(
@@ -291,28 +344,23 @@ function getIdlePenaltyAtTime(tasks: ScoreTask[], t: number): number {
         return 0;
     }
 
-    const idleIntervals: { start: number; end: number }[] = [];
     let currentT = penaltyStart;
+    let accumulatedPenalty = 0;
 
     for (const active of mergedActive) {
         if (active.end <= penaltyStart) continue;
 
         const activeStart = Math.max(active.start, penaltyStart);
         if (activeStart > currentT) {
-            idleIntervals.push({ start: currentT, end: Math.min(activeStart, t) });
+            const idleEnd = Math.min(activeStart, t);
+            accumulatedPenalty += ((idleEnd - currentT) / 1000) * 0.001;
         }
         currentT = Math.max(currentT, active.end);
         if (currentT >= t) break;
     }
 
     if (currentT < t) {
-        idleIntervals.push({ start: currentT, end: t });
-    }
-
-    let accumulatedPenalty = 0;
-    for (const idle of idleIntervals) {
-        const rawPenalty = ((idle.end - idle.start) / 1000) * 0.001;
-        accumulatedPenalty += rawPenalty;
+        accumulatedPenalty += ((t - currentT) / 1000) * 0.001;
     }
 
     return accumulatedPenalty;

@@ -7,12 +7,14 @@ import { Sidebar } from '@/components/Sidebar';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import { CreateChainModal } from '@/components/ichain/CreateChainModal';
 import { ChainCard } from '@/components/ichain/ChainCard';
+import { fetchWithCache, getCachedData, setCachedData } from '@/lib/client-cache';
 
 export default function IChainPage() {
     const { data: session } = useSession();
     const router = useRouter();
-    const [chains, setChains] = useState<any[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const initialCached = getCachedData<{ chains?: any[] }>('/api/ichain');
+    const [chains, setChains] = useState<any[]>(() => initialCached?.chains || []);
+    const [isLoading, setIsLoading] = useState<boolean>(() => !initialCached);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [activeTab, setActiveTab] = useState<'my' | 'all'>('my');
 
@@ -41,9 +43,10 @@ export default function IChainPage() {
 
     const fetchChains = async () => {
         try {
-            const response = await fetch('/api/ichain');
-            if (response.ok) {
-                const data = await response.json();
+            const data = await fetchWithCache<{ chains?: any[] }>('/api/ichain', {
+                dedupingIntervalMs: 2000,
+            });
+            if (data.chains) {
                 setChains(data.chains);
             }
         } catch (error) {
@@ -65,10 +68,13 @@ export default function IChainPage() {
         // Sort by maxTime (or totalTime for new chain)
         updatedChains.sort((a, b) => (b.maxTime || b.totalTime || 0) - (a.maxTime || a.totalTime || 0));
         setChains(updatedChains);
+        setCachedData('/api/ichain', { chains: updatedChains });
     };
 
     const handleChainDeleted = (chainId: string) => {
-        setChains(chains.filter(c => c._id !== chainId));
+        const next = chains.filter(c => c._id !== chainId);
+        setChains(next);
+        setCachedData('/api/ichain', { chains: next });
     };
 
     return (

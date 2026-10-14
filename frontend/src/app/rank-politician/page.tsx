@@ -11,9 +11,16 @@ import {
     scrapeStatusClass,
     scrapeStatusLabel,
 } from '@/lib/rank-politician/ui';
+import {
+    fetchWithCache,
+    getCachedData,
+    getInitialIsLightTheme,
+    invalidateCache,
+    prefetchJson,
+} from '@/lib/client-cache';
 
 function useIsLightTheme() {
-    const [isLightTheme, setIsLightTheme] = useState(false);
+    const [isLightTheme, setIsLightTheme] = useState<boolean>(() => getInitialIsLightTheme());
 
     useEffect(() => {
         const root = document.documentElement;
@@ -66,17 +73,28 @@ export default function RankPoliticianPage() {
     const isLightTheme = useIsLightTheme();
     const { data: session, status: authStatus } = useSession();
 
-    const [isAdmin, setIsAdmin] = useState(false);
-    const [hasAdmin, setHasAdmin] = useState(true);
-    const [politicians, setPoliticians] = useState<PoliticianRow[]>([]);
-    const [meta, setMeta] = useState<LeaderboardMeta | null>(null);
-    const [parties, setParties] = useState<string[]>([]);
+    const defaultCacheKey = '/api/rank-politician?sortBy=netScore';
+    const initialCached = getCachedData<{
+        politicians?: PoliticianRow[];
+        parties?: string[];
+        meta?: LeaderboardMeta | null;
+    }>(defaultCacheKey);
+    const initialSettings = getCachedData<{ isAdmin?: boolean }>('/api/user/settings');
+    const initialAdminStatus = getCachedData<{ hasAdmin?: boolean }>('/api/admin/status');
+
+    const [isAdmin, setIsAdmin] = useState<boolean>(() => Boolean(initialSettings?.isAdmin));
+    const [hasAdmin, setHasAdmin] = useState<boolean>(() =>
+        initialAdminStatus?.hasAdmin !== undefined ? Boolean(initialAdminStatus.hasAdmin) : true
+    );
+    const [politicians, setPoliticians] = useState<PoliticianRow[]>(() => initialCached?.politicians || []);
+    const [meta, setMeta] = useState<LeaderboardMeta | null>(() => initialCached?.meta || null);
+    const [parties, setParties] = useState<string[]>(() => initialCached?.parties || []);
     const [party, setParty] = useState('all');
     const [scrapeStatus, setScrapeStatus] = useState<ScrapeFilter>('all');
     const [sortBy, setSortBy] = useState<SortBy>('netScore');
     const [searchInput, setSearchInput] = useState('');
     const [q, setQ] = useState('');
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState<boolean>(() => !initialCached);
     const [error, setError] = useState<string | null>(null);
     const [actionLoading, setActionLoading] = useState<'seed' | 'scrape' | 'claim' | null>(null);
     const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -91,11 +109,10 @@ export default function RankPoliticianPage() {
 
         (async () => {
             try {
-                const statusRes = await fetch('/api/admin/status');
-                if (statusRes.ok) {
-                    const statusData = await statusRes.json();
-                    if (!cancelled) setHasAdmin(Boolean(statusData.hasAdmin));
-                }
+                const statusData = await fetchWithCache<{ hasAdmin?: boolean }>('/api/admin/status', {
+                    dedupingIntervalMs: 30000,
+                });
+                if (!cancelled) setHasAdmin(Boolean(statusData.hasAdmin));
             } catch {
                 // keep default
             }
@@ -106,9 +123,9 @@ export default function RankPoliticianPage() {
             }
 
             try {
-                const res = await fetch('/api/user/settings');
-                if (!res.ok) return;
-                const data = await res.json();
+                const data = await fetchWithCache<{ isAdmin?: boolean }>('/api/user/settings', {
+                    dedupingIntervalMs: 5000,
+                });
                 if (!cancelled) {
                     setIsAdmin(Boolean(data.isAdmin));
                     if (data.isAdmin) setHasAdmin(true);
@@ -123,7 +140,7 @@ export default function RankPoliticianPage() {
         };
     }, [authStatus, session?.user?.email]);
 
-    const fetchLeaderboard = useCallback(async () => {
+    const fetchLeaderboard = useCallback(async (force: boolean = false) => {
         try {
             setError(null);
             const params = new URLSearchParams({ sortBy });
@@ -131,24 +148,47 @@ export default function RankPoliticianPage() {
             if (scrapeStatus !== 'all') params.set('scrapeStatus', scrapeStatus);
             if (q) params.set('q', q);
 
-            const response = await fetch(`/api/rank-politician?${params.toString()}`);
-            if (!response.ok) throw new Error('Failed to fetch politician rankings');
-            const data = await response.json();
+            const url = `/api/rank-politician?${params.toString()}`;
+            const cachedForQuery = getCachedData<{
+                politicians?: PoliticianRow[];
+                parties?: string[];
+                meta?: LeaderboardMeta | null;
+            }>(url);
+            if (cachedForQuery && !force) {
+                setPoliticians(cachedForQuery.politicians || []);
+                setParties(cachedForQuery.parties || []);
+                setMeta(cachedForQuery.meta || null);
+                setLoading(false);
+            }
+
+            const data = await fetchWithCache<{
+                politicians?: PoliticianRow[];
+                parties?: string[];
+                meta?: LeaderboardMeta | null;
+            }>(url, { dedupingIntervalMs: 5000, force });
             setPoliticians(data.politicians || []);
             setParties(data.parties || []);
             setMeta(data.meta || null);
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error('Error fetching rank-politician:', err);
-            setError(err.message || 'Error fetching data');
+            const message = err instanceof Error ? err.message : 'Error fetching data';
+            setError(message);
         } finally {
             setLoading(false);
         }
     }, [party, q, scrapeStatus, sortBy]);
 
     useEffect(() => {
-        setLoading(true);
+        const params = new URLSearchParams({ sortBy });
+        if (party !== 'all') params.set('party', party);
+        if (scrapeStatus !== 'all') params.set('scrapeStatus', scrapeStatus);
+        if (q) params.set('q', q);
+        const url = `/api/rank-politician?${params.toString()}`;
+        if (!getCachedData(url)) {
+            setLoading(true);
+        }
         fetchLeaderboard();
-    }, [fetchLeaderboard]);
+    }, [fetchLeaderboard, party, q, scrapeStatus, sortBy]);
 
     const hasActiveFilters = party !== 'all' || scrapeStatus !== 'all' || Boolean(q) || sortBy !== 'netScore';
 
@@ -192,7 +232,8 @@ export default function RankPoliticianPage() {
                     `Scrape done: ${data.successCount ?? 0} ok, ${data.errorCount ?? 0} failed, ${data.processed ?? 0} processed.`
                 );
             }
-            await fetchLeaderboard();
+            invalidateCache('/api/rank-politician');
+            await fetchLeaderboard(true);
         } catch (err: any) {
             setActionMessage(err.message || `${action} failed`);
         } finally {
@@ -351,7 +392,7 @@ export default function RankPoliticianPage() {
                             <div className={`flex flex-col py-12 items-center justify-center gap-4 w-full max-w-4xl ${panel}`}>
                                 <p className="text-white">Couldn&apos;t load rankings.</p>
                                 <p className={`text-sm ${muted}`}>{error}</p>
-                                <LiquidButton onClick={fetchLeaderboard} className="px-4 py-2 text-white">
+                                <LiquidButton onClick={() => fetchLeaderboard(true)} className="px-4 py-2 text-white">
                                     Retry
                                 </LiquidButton>
                             </div>
@@ -390,6 +431,10 @@ export default function RankPoliticianPage() {
                                     return (
                                         <Link
                                             href={`/rank-politician/${encodeURIComponent(politician.slug)}`}
+                                            prefetch={true}
+                                            onMouseEnter={() =>
+                                                prefetchJson(`/api/rank-politician/${encodeURIComponent(politician.slug)}`, 15000)
+                                            }
                                             key={politician.id}
                                         >
                                             <motion.div

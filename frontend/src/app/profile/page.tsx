@@ -7,26 +7,42 @@ import { PortfolioView } from '@/components/profile/PortfolioView';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import type { PublicProfile } from '@/types/profile';
 import type { GithubContributionCalendar } from '@/types/github-contributions';
+import { fetchWithCache, getCachedData, setCachedData } from '@/lib/client-cache';
 
 export default function ProfileEditorPage() {
     const { data: session, status } = useSession();
-    const [profile, setProfile] = useState<PublicProfile | null>(null);
-    const [githubCalendar, setGithubCalendar] = useState<GithubContributionCalendar | null>(null);
-    const [loading, setLoading] = useState(true);
+    const initialCached = getCachedData<{ profile?: PublicProfile }>('/api/profile');
+    const [profile, setProfile] = useState<PublicProfile | null>(() => initialCached?.profile || null);
+    const [githubCalendar, setGithubCalendar] = useState<GithubContributionCalendar | null>(() => {
+        if (!initialCached?.profile?.username) return null;
+        const cachedGh = getCachedData<{ calendar?: GithubContributionCalendar | null; hidden?: boolean }>(
+            `/api/profiles/${encodeURIComponent(initialCached.profile.username)}/github`
+        );
+        return cachedGh?.hidden ? null : cachedGh?.calendar || null;
+    });
+    const [loading, setLoading] = useState<boolean>(() => !initialCached?.profile);
     const [githubLoading, setGithubLoading] = useState(false);
 
     const loadGithub = useCallback(async (username: string) => {
-        setGithubLoading(true);
+        const ghUrl = `/api/profiles/${encodeURIComponent(username)}/github`;
+        const cachedGh = getCachedData<{ calendar?: GithubContributionCalendar | null; hidden?: boolean }>(ghUrl);
+        if (cachedGh) {
+            setGithubCalendar(cachedGh.hidden ? null : cachedGh.calendar || null);
+        } else {
+            setGithubLoading(true);
+        }
         try {
-            const res = await fetch(`/api/profiles/${encodeURIComponent(username)}/github`);
-            const data = await res.json();
+            const data = await fetchWithCache<{ calendar?: GithubContributionCalendar | null; hidden?: boolean }>(
+                ghUrl,
+                { dedupingIntervalMs: 10000 }
+            );
             if (data.hidden) {
                 setGithubCalendar(null);
                 return;
             }
             setGithubCalendar(data.calendar || null);
         } catch {
-            setGithubCalendar(null);
+            if (!cachedGh) setGithubCalendar(null);
         } finally {
             setGithubLoading(false);
         }
@@ -37,17 +53,19 @@ export default function ProfileEditorPage() {
 
     useEffect(() => {
         if (!userEmail) {
-            setLoading(false);
+            if (status !== 'loading') setLoading(false);
             return;
         }
         if (loadedRef.current) return;
 
         async function load() {
             try {
-                const res = await fetch('/api/profile');
-                if (!res.ok) throw new Error('Failed to load');
-                const data = await res.json();
-                setProfile(data.profile);
+                const data = await fetchWithCache<{ profile?: PublicProfile }>('/api/profile', {
+                    dedupingIntervalMs: 3000,
+                });
+                if (data.profile) {
+                    setProfile(data.profile);
+                }
                 loadedRef.current = true;
                 if (data.profile?.githubUsername && data.profile?.showGithubContributions !== false) {
                     await loadGithub(data.profile.username);
@@ -59,7 +77,7 @@ export default function ProfileEditorPage() {
             }
         }
         load();
-    }, [userEmail, loadGithub]);
+    }, [userEmail, status, loadGithub]);
 
     const handleConnectGithub = () => {
         if (session?.user?.email) {
@@ -74,7 +92,11 @@ export default function ProfileEditorPage() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ showGithubContributions: false }),
         });
-        setProfile((p) => (p ? { ...p, showGithubContributions: false } : p));
+        setProfile((p) => {
+            const next = p ? { ...p, showGithubContributions: false } : p;
+            if (next) setCachedData('/api/profile', { profile: next });
+            return next;
+        });
         setGithubCalendar(null);
     };
 
@@ -84,11 +106,15 @@ export default function ProfileEditorPage() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ showGithubContributions: true }),
         });
-        setProfile((p) => (p ? { ...p, showGithubContributions: true } : p));
+        setProfile((p) => {
+            const next = p ? { ...p, showGithubContributions: true } : p;
+            if (next) setCachedData('/api/profile', { profile: next });
+            return next;
+        });
         if (profile?.username) await loadGithub(profile.username);
     };
 
-    if (status === 'loading' || loading) {
+    if ((status === 'loading' && !profile) || loading) {
         return (
             <div className="flex min-h-screen bg-black">
                 <Sidebar />
@@ -141,7 +167,10 @@ export default function ProfileEditorPage() {
                     onConnectGithub={handleConnectGithub}
                     onHideGithub={handleHideGithub}
                     onShowGithub={handleShowGithub}
-                    onProfileSaved={setProfile}
+                    onProfileSaved={(updated) => {
+                        setProfile(updated);
+                        setCachedData('/api/profile', { profile: updated });
+                    }}
                 />
             </main>
         </div>
