@@ -10,23 +10,27 @@ import {
 import { classifyPostWithLlm } from '@/lib/rank-politician/classify-llm';
 import { isLlmConfigured } from '@/lib/llm';
 import {
+    fetchPoliticianPostsFromGoogleNewsRss,
     getFirecrawlCreditUsage,
     isFirecrawlCreditError,
     parsePostsFromFirecrawl,
     scrapeXProfileWithFirecrawl,
+    scrapeXProfileWithJina,
+    type ScrapedPostCandidate,
+    type ScrapeProviderName,
 } from '@/lib/rank-politician/scrape';
 
-// Cabinet-only set (~30). Keep batches small so one bad run cannot burn credits.
+// Cabinet-only set (~30). Keep batches small so each cron run finishes well inside serverless limits.
 export const RANK_POLITICIAN_BATCH_SIZE = 8;
-/** Skip re-scrape if last success was fresher than this (saves credits). */
+/** Skip re-scrape if last success was fresher than this. */
 export const SCRAPE_COOLDOWN_HOURS = 20;
-/** Do not start a batch unless at least this many Firecrawl credits remain. */
+/** Do not use Firecrawl unless at least this many Firecrawl credits remain. */
 export const MIN_FIRECRAWL_CREDITS = 5;
-/** Parallel Firecrawl calls inside one batch. */
+/** Parallel profile scrapes inside one batch. */
 const SCRAPE_CONCURRENCY = 3;
 /** Parallel LLM classifications per politician. */
 const CLASSIFY_CONCURRENCY = 6;
-/** Non-credit scrape errors wait this long before consuming another credit. */
+/** Non-credit scrape errors wait this long before retrying. */
 const ERROR_RETRY_HOURS = 6;
 
 async function mapWithConcurrency<T, R>(
@@ -71,13 +75,12 @@ function isFreshSuccess(politician: { lastScrapeStatus?: string; lastScrapedAt?:
 }
 
 function isCreditErrorMessage(message?: string | null) {
-    return /insufficient credits|not enough credits/i.test(String(message || ''));
+    return /insufficient credits|not enough credits|firecrawl/i.test(String(message || ''));
 }
 
 function isInErrorBackoff(politician: { lastScrapeStatus?: string; lastScrapedAt?: Date | string | null; lastScrapeError?: string | null }) {
     if (politician.lastScrapeStatus !== 'error' || !politician.lastScrapedAt) return false;
-    // Credit failures are an account problem, not a profile problem. Retry them
-    // as soon as the batch-level credit guard allows a run.
+    // Previous Firecrawl/credit errors should be retried immediately now that Jina Reader + RSS are enabled.
     if (isCreditErrorMessage(politician.lastScrapeError)) return false;
     const ageMs = Date.now() - new Date(politician.lastScrapedAt).getTime();
     return ageMs < ERROR_RETRY_HOURS * 60 * 60 * 1000;
@@ -87,6 +90,7 @@ export interface PoliticianScrapeSummary {
     slug: string;
     xHandle: string;
     status: 'success' | 'error' | 'skipped';
+    provider?: ScrapeProviderName;
     postsFound: number;
     postsUpserted: number;
     scoredBy?: 'llm' | 'keyword' | 'mixed';
@@ -142,10 +146,9 @@ async function classifyCandidate(
                 portfolioTopics: politician.portfolioTopics || [],
             });
         } catch (error: any) {
-            // Leave any previous score in place. A zero "unknown" row would
-            // be upserted and then pulled into the leaderboard totals.
-            console.error('[rank-politician] LLM classify failed', politician.slug, error?.message || error);
-            return null;
+            // Fall back to deterministic keyword classification if LLM call fails,
+            // so posts are still scored rather than dropped.
+            console.error('[rank-politician] LLM classify failed, using keyword fallback', politician.slug, error?.message || error);
         }
     }
 
@@ -155,7 +158,7 @@ async function classifyCandidate(
 
 async function upsertScoredPosts(
     politician: IPolitician & { _id: any },
-    candidates: ReturnType<typeof parsePostsFromFirecrawl>
+    candidates: ScrapedPostCandidate[]
 ): Promise<{ upserted: number; skipped: number; scoredBy: 'llm' | 'keyword' | 'mixed' }> {
     let upserted = 0;
     let skipped = 0;
@@ -200,8 +203,73 @@ async function upsertScoredPosts(
     return { upserted, skipped, scoredBy };
 }
 
+/**
+ * Multi-provider fetch chain:
+ * 1. Jina Reader (`r.jina.ai/https://x.com/<handle>`) — free, no credits required.
+ * 2. Firecrawl — used only if Jina returned 0 posts AND Firecrawl is configured with available credits.
+ * 3. Google News RSS — 100% free fallback if X blocks headless browsers for a handle.
+ */
+async function fetchPoliticianCandidatesWithFallback(
+    politician: IPolitician & { _id: any },
+    options: { allowFirecrawl?: boolean } = {}
+): Promise<{ candidates: ScrapedPostCandidate[]; provider: ScrapeProviderName }> {
+    const errors: string[] = [];
+
+    // Tier 1: Jina Reader (free, zero credits)
+    try {
+        const jinaScraped = await scrapeXProfileWithJina(politician.xProfileUrl);
+        const jinaCandidates = parsePostsFromFirecrawl(
+            politician.xHandle,
+            jinaScraped.markdown,
+            jinaScraped.links
+        );
+        if (jinaCandidates.length > 0) {
+            return { candidates: jinaCandidates, provider: 'jina' };
+        }
+        errors.push('Jina returned 0 posts');
+    } catch (err: any) {
+        errors.push(`Jina: ${err?.message || 'failed'}`);
+    }
+
+    // Tier 2: Firecrawl (optional if configured and allowed)
+    if (options.allowFirecrawl && process.env.FIRECRAWL_API_KEY) {
+        try {
+            const fcScraped = await scrapeXProfileWithFirecrawl(politician.xProfileUrl);
+            const fcCandidates = parsePostsFromFirecrawl(
+                politician.xHandle,
+                fcScraped.markdown,
+                fcScraped.links
+            );
+            if (fcCandidates.length > 0) {
+                return { candidates: fcCandidates, provider: 'firecrawl' };
+            }
+            errors.push('Firecrawl returned 0 posts');
+        } catch (err: any) {
+            errors.push(`Firecrawl: ${err?.message || 'failed'}`);
+        }
+    }
+
+    // Tier 3: Google News RSS fallback (free, always available)
+    try {
+        const rssCandidates = await fetchPoliticianPostsFromGoogleNewsRss({
+            name: politician.name,
+            xHandle: politician.xHandle,
+            portfolio: politician.portfolio,
+        });
+        if (rssCandidates.length > 0) {
+            return { candidates: rssCandidates, provider: 'google-news-rss' };
+        }
+        errors.push('RSS returned 0 items');
+    } catch (err: any) {
+        errors.push(`RSS: ${err?.message || 'failed'}`);
+    }
+
+    throw new Error(`All scrape providers failed (${errors.join(' | ')})`);
+}
+
 export async function scrapeAndScorePolitician(
-    politician: IPolitician & { _id: any }
+    politician: IPolitician & { _id: any },
+    options: { allowFirecrawl?: boolean } = {}
 ): Promise<PoliticianScrapeSummary> {
     const summary: PoliticianScrapeSummary = {
         slug: politician.slug,
@@ -212,12 +280,11 @@ export async function scrapeAndScorePolitician(
     };
 
     try {
-        const scraped = await scrapeXProfileWithFirecrawl(politician.xProfileUrl);
-        const candidates = parsePostsFromFirecrawl(
-            politician.xHandle,
-            scraped.markdown,
-            scraped.links
+        const { candidates, provider } = await fetchPoliticianCandidatesWithFallback(
+            politician,
+            options
         );
+        summary.provider = provider;
         summary.postsFound = candidates.length;
 
         if (candidates.length === 0) {
@@ -225,11 +292,11 @@ export async function scrapeAndScorePolitician(
                 $set: {
                     lastScrapedAt: new Date(),
                     lastScrapeStatus: 'partial',
-                    lastScrapeError: 'No posts parsed from Firecrawl response',
+                    lastScrapeError: 'No posts parsed from any provider',
                 },
             });
             summary.status = 'error';
-            summary.error = 'No posts parsed from Firecrawl response';
+            summary.error = 'No posts parsed from any provider';
             return summary;
         }
 
@@ -264,8 +331,6 @@ export async function scrapeAndScorePolitician(
         return summary;
     } catch (error: any) {
         const message = error?.message || 'Unknown scrape error';
-        // Credit failures: do not stamp lastScrapedAt as a normal error retry signal.
-        // Keep status=error so UI shows failure, but batch runner will abort immediately.
         await Politician.findByIdAndUpdate(politician._id, {
             $set: {
                 lastScrapedAt: new Date(),
@@ -292,86 +357,17 @@ export async function runRankPoliticianScrapeBatch(
     const limit = Math.max(1, Math.min(options.limit || RANK_POLITICIAN_BATCH_SIZE, 15));
     const force = Boolean(options.force);
 
-    const emptyBase = {
-        ranAt: new Date().toISOString(),
-        firecrawlConfigured,
-        llmConfigured,
-        creditsRemaining: null as number | null,
-        creditGuardTriggered: false,
-        processed: 0,
-        successCount: 0,
-        errorCount: 0,
-        skippedCount: 0,
-        results: [] as PoliticianScrapeSummary[],
-    };
-
-    if (!firecrawlConfigured) {
-        return {
-            ...emptyBase,
-            results: [
-                {
-                    slug: '-',
-                    xHandle: '-',
-                    status: 'skipped',
-                    postsFound: 0,
-                    postsUpserted: 0,
-                    error: 'FIRECRAWL_API_KEY is not configured',
-                },
-            ],
-            skippedCount: 1,
-        };
-    }
-
-    const creditUsage = await getFirecrawlCreditUsage();
+    // Check optional Firecrawl credits only to decide if Tier-2 Firecrawl fallback can be used.
+    // Even if Firecrawl is unconfigured or has 0 credits, Jina Reader + Google News RSS run for free.
+    const creditUsage = firecrawlConfigured ? await getFirecrawlCreditUsage() : null;
     const creditsRemaining =
         creditUsage && Number.isFinite(creditUsage.remainingCredits)
             ? creditUsage.remainingCredits
             : null;
-
-    if (creditsRemaining !== null && creditsRemaining < MIN_FIRECRAWL_CREDITS) {
-        return {
-            ...emptyBase,
-            creditsRemaining,
-            creditGuardTriggered: true,
-            skippedCount: 1,
-            results: [
-                {
-                    slug: '-',
-                    xHandle: '-',
-                    status: 'skipped',
-                    postsFound: 0,
-                    postsUpserted: 0,
-                    error: `Firecrawl credits too low (${creditsRemaining}). Scraping paused to avoid wasted calls.`,
-                },
-            ],
-        };
-    }
-
-    // Never request more scrapes than remaining credits (1 credit ≈ 1 profile scrape).
-    // If the credit API is unreachable, scrape a single profile instead of a full batch.
-    const creditCappedLimit =
-        creditsRemaining !== null
-            ? Math.max(0, Math.min(limit, creditsRemaining - 1))
-            : 1;
-
-    if (creditCappedLimit <= 0) {
-        return {
-            ...emptyBase,
-            creditsRemaining,
-            creditGuardTriggered: true,
-            skippedCount: 1,
-            results: [
-                {
-                    slug: '-',
-                    xHandle: '-',
-                    status: 'skipped',
-                    postsFound: 0,
-                    postsUpserted: 0,
-                    error: 'Not enough Firecrawl credits to scrape safely.',
-                },
-            ],
-        };
-    }
+    const allowFirecrawl =
+        firecrawlConfigured &&
+        creditsRemaining !== null &&
+        creditsRemaining >= MIN_FIRECRAWL_CREDITS;
 
     const filter: Record<string, unknown> = { isActive: true };
     if (options.slugs?.length) {
@@ -382,7 +378,6 @@ export async function runRankPoliticianScrapeBatch(
     const politicians = (candidates as any[])
         .filter((p) => {
             if (force) return true;
-            // Skip fresh successes — don't re-burn credits every cron tick.
             if (isFreshSuccess(p)) return false;
             if (isInErrorBackoff(p)) return false;
             return true;
@@ -398,50 +393,22 @@ export async function runRankPoliticianScrapeBatch(
 
             return String(a.slug || '').localeCompare(String(b.slug || ''));
         })
-        .slice(0, creditCappedLimit);
-
-    let creditGuardTriggered = false;
+        .slice(0, limit);
 
     const results = await mapWithConcurrency(
         politicians,
         SCRAPE_CONCURRENCY,
         async (politician): Promise<PoliticianScrapeSummary> => {
-            if (creditGuardTriggered) {
-                return {
-                    slug: politician.slug,
-                    xHandle: politician.xHandle,
-                    status: 'skipped',
-                    postsFound: 0,
-                    postsUpserted: 0,
-                    error: 'Skipped: Firecrawl credits exhausted mid-batch',
-                };
-            }
-
-            try {
-                return await scrapeAndScorePolitician(politician);
-            } catch (error: any) {
-                if (isFirecrawlCreditError(error)) {
-                    creditGuardTriggered = true;
-                    return {
-                        slug: politician.slug,
-                        xHandle: politician.xHandle,
-                        status: 'error',
-                        postsFound: 0,
-                        postsUpserted: 0,
-                        error: error?.message || 'Firecrawl credits exhausted',
-                    };
-                }
-                throw error;
-            }
+            return await scrapeAndScorePolitician(politician, { allowFirecrawl });
         }
     );
 
     return {
         ranAt: new Date().toISOString(),
-        firecrawlConfigured: true,
+        firecrawlConfigured,
         llmConfigured,
         creditsRemaining,
-        creditGuardTriggered,
+        creditGuardTriggered: false,
         processed: results.length,
         successCount: results.filter((r) => r.status === 'success').length,
         errorCount: results.filter((r) => r.status === 'error').length,
