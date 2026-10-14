@@ -22,6 +22,31 @@ export const RANK_POLITICIAN_BATCH_SIZE = 8;
 export const SCRAPE_COOLDOWN_HOURS = 20;
 /** Do not start a batch unless at least this many Firecrawl credits remain. */
 export const MIN_FIRECRAWL_CREDITS = 5;
+/** Parallel Firecrawl calls inside one batch. */
+const SCRAPE_CONCURRENCY = 3;
+/** Parallel LLM classifications per politician. */
+const CLASSIFY_CONCURRENCY = 6;
+/** Non-credit scrape errors wait this long before consuming another credit. */
+const ERROR_RETRY_HOURS = 6;
+
+async function mapWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let cursor = 0;
+    const runners = Math.min(Math.max(concurrency, 1), items.length);
+    await Promise.all(
+        Array.from({ length: runners }, async () => {
+            while (cursor < items.length) {
+                const index = cursor++;
+                results[index] = await worker(items[index], index);
+            }
+        })
+    );
+    return results;
+}
 
 function scrapePriority(status?: string | null): number {
     switch (status) {
@@ -45,8 +70,17 @@ function isFreshSuccess(politician: { lastScrapeStatus?: string; lastScrapedAt?:
     return ageMs < SCRAPE_COOLDOWN_HOURS * 60 * 60 * 1000;
 }
 
-function isNonRetriableCreditError(message?: string | null) {
+function isCreditErrorMessage(message?: string | null) {
     return /insufficient credits|not enough credits/i.test(String(message || ''));
+}
+
+function isInErrorBackoff(politician: { lastScrapeStatus?: string; lastScrapedAt?: Date | string | null; lastScrapeError?: string | null }) {
+    if (politician.lastScrapeStatus !== 'error' || !politician.lastScrapedAt) return false;
+    // Credit failures are an account problem, not a profile problem. Retry them
+    // as soon as the batch-level credit guard allows a run.
+    if (isCreditErrorMessage(politician.lastScrapeError)) return false;
+    const ageMs = Date.now() - new Date(politician.lastScrapedAt).getTime();
+    return ageMs < ERROR_RETRY_HOURS * 60 * 60 * 1000;
 }
 
 export interface PoliticianScrapeSummary {
@@ -99,7 +133,7 @@ async function recomputePoliticianStats(politicianId: string) {
 async function classifyCandidate(
     text: string,
     politician: IPolitician & { _id: any }
-): Promise<ClassifiedPost & { scoredBy: 'llm' | 'keyword' | 'fallback' }> {
+): Promise<(ClassifiedPost & { scoredBy: 'llm' | 'keyword' }) | null> {
     if (isLlmConfigured()) {
         try {
             return await classifyPostWithLlm(text, {
@@ -108,13 +142,10 @@ async function classifyCandidate(
                 portfolioTopics: politician.portfolioTopics || [],
             });
         } catch (error: any) {
-            // Prefer no false keyword boosts when LLM is the intended scorer.
-            return {
-                category: 'unknown',
-                score: 0,
-                scoreReason: 'Could not classify this post automatically',
-                scoredBy: 'fallback',
-            };
+            // Leave any previous score in place. A zero "unknown" row would
+            // be upserted and then pulled into the leaderboard totals.
+            console.error('[rank-politician] LLM classify failed', politician.slug, error?.message || error);
+            return null;
         }
     }
 
@@ -125,12 +156,17 @@ async function classifyCandidate(
 async function upsertScoredPosts(
     politician: IPolitician & { _id: any },
     candidates: ReturnType<typeof parsePostsFromFirecrawl>
-): Promise<{ upserted: number; scoredBy: 'llm' | 'keyword' | 'mixed' }> {
+): Promise<{ upserted: number; skipped: number; scoredBy: 'llm' | 'keyword' | 'mixed' }> {
     let upserted = 0;
-    const methods = new Set<'llm' | 'keyword' | 'fallback'>();
+    let skipped = 0;
+    const methods = new Set<'llm' | 'keyword'>();
 
-    for (const candidate of candidates) {
+    await mapWithConcurrency(candidates, CLASSIFY_CONCURRENCY, async (candidate) => {
         const classification = await classifyCandidate(candidate.text, politician);
+        if (!classification) {
+            skipped++;
+            return;
+        }
         methods.add(classification.scoredBy);
 
         await PoliticianPost.findOneAndUpdate(
@@ -152,7 +188,7 @@ async function upsertScoredPosts(
             { upsert: true, new: true, setDefaultsOnInsert: true }
         );
         upserted++;
-    }
+    });
 
     const scoredBy: 'llm' | 'keyword' | 'mixed' =
         methods.size === 1 && methods.has('llm')
@@ -161,7 +197,7 @@ async function upsertScoredPosts(
               ? 'keyword'
               : 'mixed';
 
-    return { upserted, scoredBy };
+    return { upserted, skipped, scoredBy };
 }
 
 export async function scrapeAndScorePolitician(
@@ -200,6 +236,21 @@ export async function scrapeAndScorePolitician(
         const upsert = await upsertScoredPosts(politician, candidates);
         summary.postsUpserted = upsert.upserted;
         summary.scoredBy = upsert.scoredBy;
+
+        if (upsert.upserted === 0) {
+            const message = 'Could not classify any posts in this scrape';
+            await Politician.findByIdAndUpdate(politician._id, {
+                $set: {
+                    lastScrapedAt: new Date(),
+                    lastScrapeStatus: 'error',
+                    lastScrapeError: message,
+                },
+            });
+            summary.status = 'error';
+            summary.error = message;
+            return summary;
+        }
+
         await recomputePoliticianStats(String(politician._id));
 
         await Politician.findByIdAndUpdate(politician._id, {
@@ -297,10 +348,11 @@ export async function runRankPoliticianScrapeBatch(
     }
 
     // Never request more scrapes than remaining credits (1 credit ≈ 1 profile scrape).
+    // If the credit API is unreachable, scrape a single profile instead of a full batch.
     const creditCappedLimit =
         creditsRemaining !== null
             ? Math.max(0, Math.min(limit, creditsRemaining - 1))
-            : limit;
+            : 1;
 
     if (creditCappedLimit <= 0) {
         return {
@@ -332,13 +384,7 @@ export async function runRankPoliticianScrapeBatch(
             if (force) return true;
             // Skip fresh successes — don't re-burn credits every cron tick.
             if (isFreshSuccess(p)) return false;
-            // Don't keep hammering profiles that already failed for no-credits.
-            if (
-                p.lastScrapeStatus === 'error' &&
-                isNonRetriableCreditError(p.lastScrapeError)
-            ) {
-                return false;
-            }
+            if (isInErrorBackoff(p)) return false;
             return true;
         })
         .sort((a, b) => {
@@ -354,42 +400,41 @@ export async function runRankPoliticianScrapeBatch(
         })
         .slice(0, creditCappedLimit);
 
-    const results: PoliticianScrapeSummary[] = [];
     let creditGuardTriggered = false;
 
-    for (const politician of politicians) {
-        try {
-            const result = await scrapeAndScorePolitician(politician);
-            results.push(result);
-        } catch (error: any) {
-            if (isFirecrawlCreditError(error)) {
-                creditGuardTriggered = true;
-                results.push({
+    const results = await mapWithConcurrency(
+        politicians,
+        SCRAPE_CONCURRENCY,
+        async (politician): Promise<PoliticianScrapeSummary> => {
+            if (creditGuardTriggered) {
+                return {
                     slug: politician.slug,
                     xHandle: politician.xHandle,
-                    status: 'error',
+                    status: 'skipped',
                     postsFound: 0,
                     postsUpserted: 0,
-                    error: error?.message || 'Firecrawl credits exhausted',
-                });
-                // Abort remaining profiles — do not spend more failed calls.
-                const done = new Set(results.map((r) => r.slug));
-                for (const remaining of politicians) {
-                    if (done.has(remaining.slug)) continue;
-                    results.push({
-                        slug: remaining.slug,
-                        xHandle: remaining.xHandle,
-                        status: 'skipped',
+                    error: 'Skipped: Firecrawl credits exhausted mid-batch',
+                };
+            }
+
+            try {
+                return await scrapeAndScorePolitician(politician);
+            } catch (error: any) {
+                if (isFirecrawlCreditError(error)) {
+                    creditGuardTriggered = true;
+                    return {
+                        slug: politician.slug,
+                        xHandle: politician.xHandle,
+                        status: 'error',
                         postsFound: 0,
                         postsUpserted: 0,
-                        error: 'Skipped: Firecrawl credits exhausted mid-batch',
-                    });
+                        error: error?.message || 'Firecrawl credits exhausted',
+                    };
                 }
-                break;
+                throw error;
             }
-            throw error;
         }
-    }
+    );
 
     return {
         ranAt: new Date().toISOString(),

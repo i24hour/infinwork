@@ -80,8 +80,36 @@ function normalizeText(text: string): string {
         .trim();
 }
 
+function isUsableKeyword(keyword: string): boolean {
+    if (!keyword) return false;
+    // Hindi words are often two characters ("जल"). Latin tokens shorter than
+    // three letters ("it", "sc", "st") sit inside ordinary English words.
+    if (/\p{Script=Devanagari}/u.test(keyword)) return keyword.length >= 2;
+    return keyword.length >= 3;
+}
+
+function keywordMatches(text: string, keyword: string): boolean {
+    const normalizedKeyword = keyword.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!isUsableKeyword(normalizedKeyword)) return false;
+    const escaped = normalizedKeyword
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        .replace(/ /g, '\\s+');
+    return new RegExp(
+        `(?<![\\p{L}\\p{M}\\p{N}])${escaped}(?![\\p{L}\\p{M}\\p{N}])`,
+        'u'
+    ).test(text);
+}
+
 function countKeywordHits(text: string, keywords: string[]): string[] {
-    return keywords.filter((keyword) => text.includes(keyword.toLowerCase()));
+    const seen = new Set<string>();
+    const hits: string[] = [];
+    for (const keyword of keywords) {
+        const key = String(keyword || '').trim().toLowerCase();
+        if (!key || seen.has(key) || !keywordMatches(text, key)) continue;
+        seen.add(key);
+        hits.push(key);
+    }
+    return hits;
 }
 
 export function classifyPost(text: string, portfolioTopics: string[] = []): ClassifiedPost {

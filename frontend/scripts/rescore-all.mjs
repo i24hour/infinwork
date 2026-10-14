@@ -59,8 +59,34 @@ function normalizeText(text) {
         .trim();
 }
 
+function isUsableKeyword(keyword) {
+    if (!keyword) return false;
+    if (/\p{Script=Devanagari}/u.test(keyword)) return keyword.length >= 2;
+    return keyword.length >= 3;
+}
+
+function keywordMatches(text, keyword) {
+    const normalizedKeyword = String(keyword || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!isUsableKeyword(normalizedKeyword)) return false;
+    const escaped = normalizedKeyword
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        .replace(/ /g, '\\s+');
+    return new RegExp(
+        `(?<![\\p{L}\\p{M}\\p{N}])${escaped}(?![\\p{L}\\p{M}\\p{N}])`,
+        'u'
+    ).test(text);
+}
+
 function countKeywordHits(text, keywords) {
-    return keywords.filter((keyword) => text.includes(String(keyword).toLowerCase()));
+    const seen = new Set();
+    const hits = [];
+    for (const keyword of keywords) {
+        const key = String(keyword || '').trim().toLowerCase();
+        if (!key || seen.has(key) || !keywordMatches(text, key)) continue;
+        seen.add(key);
+        hits.push(key);
+    }
+    return hits;
 }
 
 const CATEGORY_POINTS = {
