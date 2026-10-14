@@ -33,7 +33,7 @@ interface SFLeaderboardUser {
 }
 
 export default function SFTrackerPage() {
-    const { data: session } = useSession();
+    const { data: session, status } = useSession();
     const initialTargets = getCachedData<{ targets?: SFTrackerItem[] }>('/api/sf-tracker');
     const initialLeaderboard = getCachedData<{ leaderboard?: SFLeaderboardUser[] }>('/api/sf-tracker/all');
     const [targets, setTargets] = useState<SFTrackerItem[]>(() => initialTargets?.targets || []);
@@ -53,10 +53,12 @@ export default function SFTrackerPage() {
     const [failureReason, setFailureReason] = useState('');
 
     useEffect(() => {
-        if (session?.user?.email) {
-            fetchTargets();
+        if (status === 'unauthenticated') {
+            setIsLoading(false);
+            return;
         }
-    }, [session]);
+        fetchTargets();
+    }, [status]);
 
     useEffect(() => {
         if (activeTab === 'all') {

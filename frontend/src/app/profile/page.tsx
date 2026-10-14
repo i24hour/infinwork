@@ -48,12 +48,11 @@ export default function ProfileEditorPage() {
         }
     }, []);
 
-    const userEmail = session?.user?.email;
     const loadedRef = useRef(false);
 
     useEffect(() => {
-        if (!userEmail) {
-            if (status !== 'loading') setLoading(false);
+        if (status === 'unauthenticated') {
+            setLoading(false);
             return;
         }
         if (loadedRef.current) return;
@@ -71,13 +70,16 @@ export default function ProfileEditorPage() {
                     await loadGithub(data.profile.username);
                 }
             } catch (err) {
+                if (status === 'loading') return;
                 console.error(err);
             } finally {
-                setLoading(false);
+                if (status !== 'loading' || loadedRef.current) {
+                    setLoading(false);
+                }
             }
         }
         load();
-    }, [userEmail, status, loadGithub]);
+    }, [status, loadGithub]);
 
     const handleConnectGithub = () => {
         if (session?.user?.email) {

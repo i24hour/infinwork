@@ -56,93 +56,96 @@ export const authOptions: NextAuthOptions = {
                 token.id = user.id;
             }
 
-            try {
-                await connectDB();
+            const isSignInOrLink = Boolean(user || (account && account.provider === 'github'));
+            if (isSignInOrLink) {
+                try {
+                    await connectDB();
 
-                if (account && account.provider === 'github') {
-                    // When user authenticates with github, update their profile
-                    const githubProfile = profile as any;
-                    
-                    // nextJS 16 safe cookie retrieval
-                    let linkCookieValue = null;
-                    try {
-                        let cStore: any = cookies();
-                        if (cStore instanceof Promise || typeof cStore.then === 'function') {
-                            cStore = await cStore;
+                    if (account && account.provider === 'github') {
+                        // When user authenticates with github, update their profile
+                        const githubProfile = profile as any;
+                        
+                        // nextJS 16 safe cookie retrieval
+                        let linkCookieValue = null;
+                        try {
+                            let cStore: any = cookies();
+                            if (cStore instanceof Promise || typeof cStore.then === 'function') {
+                                cStore = await cStore;
+                            }
+                            linkCookieValue = cStore.get('github_link_email')?.value;
+                        } catch (e) {
+                            console.error('cookie error', e);
                         }
-                        linkCookieValue = cStore.get('github_link_email')?.value;
-                    } catch (e) {
-                        console.error('cookie error', e);
-                    }
-                    
-                    let isLinking = false;
-                    let emailToFind = user?.email || token.email;
+                        
+                        let isLinking = false;
+                        let emailToFind = user?.email || token.email;
 
-                    if (linkCookieValue) {
-                        emailToFind = decodeURIComponent(linkCookieValue);
-                        isLinking = true;
-                    }
-                    
-                    if (emailToFind) {
-                        const existingUser = await User.findOne({ email: emailToFind });
-                        const isSameGithubAccount = existingUser?.githubId === account.providerAccountId;
-
-                        const githubUpdate: Record<string, unknown> = {
-                            githubId: account.providerAccountId,
-                            githubUsername: githubProfile?.login,
-                            githubAccessToken: account.access_token,
-                        };
-
-                        if (!isSameGithubAccount) {
-                            githubUpdate.githubConnectedAt = new Date();
-                            githubUpdate.githubCommitsTotal = 0;
-                            githubUpdate.points = 0;
-                        } else if (!existingUser?.githubConnectedAt) {
-                            githubUpdate.githubConnectedAt = new Date();
+                        if (linkCookieValue) {
+                            emailToFind = decodeURIComponent(linkCookieValue);
+                            isLinking = true;
                         }
+                        
+                        if (emailToFind) {
+                            const existingUser = await User.findOne({ email: emailToFind });
+                            const isSameGithubAccount = existingUser?.githubId === account.providerAccountId;
 
-                        const userUpdate: Record<string, unknown> = {
-                            $set: githubUpdate,
-                        };
-
-                        if (!isSameGithubAccount) {
-                            userUpdate.$unset = {
-                                lastGithubSyncAt: '',
-                                githubPointsLastUpdatedAt: '',
-                                githubPointsHistory: '',
-                                githubSyncLockUntil: '',
+                            const githubUpdate: Record<string, unknown> = {
+                                githubId: account.providerAccountId,
+                                githubUsername: githubProfile?.login,
+                                githubAccessToken: account.access_token,
                             };
-                        }
 
-                        await User.findOneAndUpdate(
-                            { email: emailToFind },
-                            userUpdate,
-                            { new: true, upsert: true }
-                        );
+                            if (!isSameGithubAccount) {
+                                githubUpdate.githubConnectedAt = new Date();
+                                githubUpdate.githubCommitsTotal = 0;
+                                githubUpdate.points = 0;
+                            } else if (!existingUser?.githubConnectedAt) {
+                                githubUpdate.githubConnectedAt = new Date();
+                            }
 
-                        if (isLinking) {
-                            // If we are linking an account from the Settings page, we MUST prevent NextAuth
-                            // from replacing the original session (Google) with the new identity (GitHub).
-                            const originalUser = await User.findOne({ email: emailToFind });
-                            if (originalUser) {
-                                token.email = originalUser.email;
-                                token.name = originalUser.username;
-                                token.id = originalUser._id.toString();
-                                // token.picture = originalUser.image || token.picture;
-                                
-                                // Return early so NextAuth doesn't overwrite it with GitHub details
-                                return token;
+                            const userUpdate: Record<string, unknown> = {
+                                $set: githubUpdate,
+                            };
+
+                            if (!isSameGithubAccount) {
+                                userUpdate.$unset = {
+                                    lastGithubSyncAt: '',
+                                    githubPointsLastUpdatedAt: '',
+                                    githubPointsHistory: '',
+                                    githubSyncLockUntil: '',
+                                };
+                            }
+
+                            await User.findOneAndUpdate(
+                                { email: emailToFind },
+                                userUpdate,
+                                { new: true, upsert: true }
+                            );
+
+                            if (isLinking) {
+                                // If we are linking an account from the Settings page, we MUST prevent NextAuth
+                                // from replacing the original session (Google) with the new identity (GitHub).
+                                const originalUser = await User.findOne({ email: emailToFind });
+                                if (originalUser) {
+                                    token.email = originalUser.email;
+                                    token.name = originalUser.username;
+                                    token.id = originalUser._id.toString();
+                                    // token.picture = originalUser.image || token.picture;
+                                    
+                                    // Return early so NextAuth doesn't overwrite it with GitHub details
+                                    return token;
+                                }
                             }
                         }
                     }
-                }
 
-                if (token?.email && user) {
-                    const profileName = (user as any)?.name || token.name || null;
-                    await ensureUserHasDefaultUsername(token.email, profileName);
+                    if (token?.email && user) {
+                        const profileName = (user as any)?.name || token.name || null;
+                        await ensureUserHasDefaultUsername(token.email, profileName);
+                    }
+                } catch (error) {
+                    console.error('Failed to update DB during auth:', error);
                 }
-            } catch (error) {
-                console.error('Failed to update DB during auth:', error);
             }
 
             return token;

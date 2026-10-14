@@ -3,14 +3,9 @@
 import { useState, useEffect, useCallback, use, useMemo } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
-import dynamic from 'next/dynamic';
 import { LiveTimer } from '@/components/LiveTimer';
 import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } from '@/lib/score';
-
-const PerformanceChart = dynamic(
-    () => import('@/components/PerformanceChart').then(mod => mod.PerformanceChart),
-    { ssr: false, loading: () => <div className="h-[500px] bg-black rounded-2xl border border-white/10 flex items-center justify-center text-zinc-500">Loading chart...</div> }
-);
+import { PerformanceChart } from '@/components/PerformanceChart';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { fetchWithCache, getCachedData } from '@/lib/client-cache';

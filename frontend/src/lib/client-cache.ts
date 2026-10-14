@@ -19,27 +19,42 @@ const memoryCache = new Map<string, CacheEntry>();
 const inFlightRequests = new Map<string, Promise<unknown>>();
 const subscribers = new Map<string, Set<(data: unknown) => void>>();
 
-function readSessionStorage<T>(key: string): CacheEntry<T> | null {
+function readPersistentStorage<T>(key: string): CacheEntry<T> | null {
     if (typeof window === 'undefined') return null;
-    try {
-        const raw = window.sessionStorage.getItem(STORAGE_PREFIX + key);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw) as CacheEntry<T>;
-        if (!parsed || typeof parsed !== 'object' || typeof parsed.updatedAt !== 'number') {
-            return null;
+    const storageKey = STORAGE_PREFIX + key;
+    for (const storage of [window.sessionStorage, window.localStorage]) {
+        try {
+            const raw = storage.getItem(storageKey);
+            if (!raw) continue;
+            const parsed = JSON.parse(raw) as CacheEntry<T>;
+            if (parsed && typeof parsed === 'object' && typeof parsed.updatedAt === 'number') {
+                return parsed;
+            }
+        } catch {
+            // Ignore storage read/parse errors
         }
-        return parsed;
-    } catch {
-        return null;
     }
+    return null;
 }
 
-function writeSessionStorage<T>(key: string, entry: CacheEntry<T>): void {
+function writePersistentStorage<T>(key: string, entry: CacheEntry<T>): void {
     if (typeof window === 'undefined') return;
+    const storageKey = STORAGE_PREFIX + key;
+    let serialized: string | null = null;
     try {
-        window.sessionStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(entry));
+        serialized = JSON.stringify(entry);
     } catch {
-        // Ignore quota or serialization errors
+        return;
+    }
+    try {
+        window.sessionStorage.setItem(storageKey, serialized);
+    } catch {
+        // Ignore quota errors
+    }
+    try {
+        window.localStorage.setItem(storageKey, serialized);
+    } catch {
+        // Ignore quota errors
     }
 }
 
@@ -61,7 +76,7 @@ function notifySubscribers<T>(key: string, data: T): void {
 export function getCachedData<T>(key: string, maxAgeMs?: number): T | undefined {
     let entry = memoryCache.get(key) as CacheEntry<T> | undefined;
     if (!entry) {
-        const stored = readSessionStorage<T>(key);
+        const stored = readPersistentStorage<T>(key);
         if (stored) {
             memoryCache.set(key, stored);
             entry = stored;
@@ -90,7 +105,7 @@ export function setCachedData<T>(
         updatedAt: Date.now(),
     };
     memoryCache.set(key, entry);
-    writeSessionStorage(key, entry);
+    writePersistentStorage(key, entry);
     notifySubscribers(key, next);
     return next;
 }
@@ -105,17 +120,19 @@ export function invalidateCache(keyOrPrefix: string, exact: boolean = false): vo
         }
     }
     if (typeof window !== 'undefined') {
-        try {
-            const fullPrefix = STORAGE_PREFIX + keyOrPrefix;
-            for (let i = window.sessionStorage.length - 1; i >= 0; i--) {
-                const storageKey = window.sessionStorage.key(i);
-                if (!storageKey) continue;
-                if (exact ? storageKey === fullPrefix : storageKey.startsWith(fullPrefix)) {
-                    window.sessionStorage.removeItem(storageKey);
+        const fullPrefix = STORAGE_PREFIX + keyOrPrefix;
+        for (const storage of [window.sessionStorage, window.localStorage]) {
+            try {
+                for (let i = storage.length - 1; i >= 0; i--) {
+                    const storageKey = storage.key(i);
+                    if (!storageKey) continue;
+                    if (exact ? storageKey === fullPrefix : storageKey.startsWith(fullPrefix)) {
+                        storage.removeItem(storageKey);
+                    }
                 }
+            } catch {
+                // Ignore storage errors
             }
-        } catch {
-            // Ignore storage errors
         }
     }
 }

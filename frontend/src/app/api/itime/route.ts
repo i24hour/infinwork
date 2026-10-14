@@ -8,7 +8,7 @@ import { autoCancelExpiredActiveTasks } from '@/lib/itime-runtime';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
     try {
         const session = await getServerSession(authOptions);
 
@@ -16,22 +16,25 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
+        const email = session.user.email;
         await connectDB();
-        
-        // Auto-register/update the User in our collection
-        const user = await User.findOneAndUpdate(
-            { email: session.user.email },
-            { $setOnInsert: { email: session.user.email } },
-            { upsert: true, new: true }
+
+        // Auto-register user and check runtime limits in the background so GET /api/itime returns with 1 fast query
+        User.updateOne(
+            { email },
+            { $setOnInsert: { email } },
+            { upsert: true }
+        ).catch((err) => console.error('User upsert failed in /api/itime:', err));
+
+        autoCancelExpiredActiveTasks({ userId: email }).catch((err) =>
+            console.error('autoCancelExpiredActiveTasks failed in /api/itime:', err)
         );
 
-        console.log(`[DEBUG_LOG] User auto-registered/checked: ${session.user.email}, count after this might change.`);
-
-        await autoCancelExpiredActiveTasks({ userId: session.user.email });
-
         const tasks = await ITimeTask.find({
-            userId: session.user.email
-        }).sort({ createdAt: -1 });
+            userId: email
+        })
+            .sort({ createdAt: -1 })
+            .lean();
 
         return NextResponse.json({ tasks });
     } catch (error) {

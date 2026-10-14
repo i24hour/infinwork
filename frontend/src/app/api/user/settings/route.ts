@@ -19,18 +19,24 @@ export async function GET() {
         const email = session.user.email;
         await connectDB();
 
-        // Trigger GitHub auto-sync asynchronously so settings/sidebar reads never block on external GraphQL calls
+        // Trigger GitHub auto-sync and chain points recomputation asynchronously so settings/sidebar reads never block
         syncGithubForUserByEmail(email).catch((syncError) => {
             console.error('GitHub auto-sync failed in settings route:', syncError);
         });
+        recomputeChainPointsForUsers([email]).catch((chainError) => {
+            console.error('Chain points recompute failed in settings route:', chainError);
+        });
 
-        const [, user, tasks] = await Promise.all([
-            recomputeChainPointsForUsers([email]),
-            ensureUserHasDefaultUsername(email),
+        const [existingUser, tasks] = await Promise.all([
+            User.findOne({ email: email.trim().toLowerCase() }).lean(),
             ITimeTask.find({ userId: email })
                 .select('startTime pausedElapsed enabled completed completedAt events')
                 .lean(),
         ]);
+
+        const user = existingUser?.username
+            ? existingUser
+            : await ensureUserHasDefaultUsername(email);
 
         const scoreBreakdown = getScoreBreakdownAtTime(
             tasks,

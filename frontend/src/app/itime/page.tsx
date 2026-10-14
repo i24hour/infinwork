@@ -4,14 +4,9 @@ import { Sidebar } from '@/components/Sidebar';
 import { SignInModal } from '@/components/SignInModal';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import Image from 'next/image';
-import dynamic from 'next/dynamic';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } from '@/lib/score';
-
-const PerformanceChart = dynamic(
-    () => import('@/components/PerformanceChart').then(mod => mod.PerformanceChart),
-    { ssr: false, loading: () => <div className="h-[500px] bg-black rounded-2xl border border-white/10 flex items-center justify-center text-zinc-500">Loading chart...</div> }
-);
+import { PerformanceChart } from '@/components/PerformanceChart';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { LiveTimer, LiveTotalTimer, LivePauseCountdown } from '@/components/LiveTimer';
 import {
@@ -124,11 +119,9 @@ export default function ITimePage() {
         }
     };
 
-    // Fetch tasks from MongoDB for authenticated users
+    // Fetch tasks from MongoDB for authenticated users (fire immediately even while session status is resolving)
     const fetchTasks = useCallback(async () => {
-        if (status === 'loading') return;
-
-        if (status === 'authenticated') {
+        if (status !== 'unauthenticated') {
             try {
                 const data = await fetchWithCache<{
                     tasks?: Array<Omit<ITimeTask, 'id'> & { id?: string }>;
@@ -137,19 +130,24 @@ export default function ITimePage() {
                     ...task,
                     id: task._id ?? task.id ?? '',
                 })));
-            } catch (error) {
-                console.error('Failed to fetch tasks:', error);
-            } finally {
                 setHasLoadedTasksOnce(true);
+                return;
+            } catch (error) {
+                if (status === 'loading') {
+                    return;
+                }
+                console.error('Failed to fetch tasks:', error);
+                setHasLoadedTasksOnce(true);
+                return;
             }
-        } else {
-            // Load from localStorage for guest users
-            if (typeof window !== 'undefined') {
-                const saved = localStorage.getItem('itime_tasks');
-                setTasks(saved ? JSON.parse(saved) : []);
-            }
-            setHasLoadedTasksOnce(true);
         }
+
+        // Load from localStorage for guest users
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('itime_tasks');
+            setTasks(saved ? JSON.parse(saved) : []);
+        }
+        setHasLoadedTasksOnce(true);
     }, [status]);
 
     const pauseMenuRef = useRef<HTMLDivElement>(null);
@@ -196,28 +194,28 @@ export default function ITimePage() {
         }
     }, []);
 
-    // Initial load
+    // Initial load — fire API fetches in parallel with NextAuth session resolution
     useEffect(() => {
-        if (status === 'loading') return;
-
-        if (!getCachedData('/api/itime')) {
-            setHasLoadedTasksOnce(false);
-        }
-        if (status !== 'authenticated') {
+        if (status === 'unauthenticated') {
             setHasLoadedProfileOnce(true);
             setGamificationPoints(0);
             setGamificationPointsLastUpdatedAt(null);
             setGithubPointsHistory(null);
             setChainPoints(0);
             setChainPointsHistory(null);
-        } else if (!getCachedData('/api/user/settings')) {
+            fetchTasks();
+            return;
+        }
+
+        if (!getCachedData('/api/itime')) {
+            setHasLoadedTasksOnce(false);
+        }
+        if (!getCachedData('/api/user/settings')) {
             setHasLoadedProfileOnce(false);
         }
         fetchTasks();
-        if (status === 'authenticated' && session?.user?.email) {
-            fetchUserProfile();
-        }
-    }, [fetchTasks, fetchUserProfile, session?.user?.email, status]);
+        fetchUserProfile();
+    }, [fetchTasks, fetchUserProfile, status]);
 
     useEffect(() => {
         if (status !== 'authenticated' || !session?.user?.email) return;
@@ -602,8 +600,8 @@ export default function ITimePage() {
         return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     };
 
-    const tasksReady = status !== 'loading' && hasLoadedTasksOnce;
-    const scoreReady = tasksReady && (status !== 'authenticated' || hasLoadedProfileOnce);
+    const tasksReady = hasLoadedTasksOnce;
+    const scoreReady = tasksReady && (status === 'unauthenticated' || hasLoadedProfileOnce);
     const totalTime = useMemo(() => tasks.reduce((sum, task) => sum + getElapsedSeconds(task), 0), [tasks, getElapsedSeconds]);
     const liveScore = useMemo<number | null>(
         () => scoreReady

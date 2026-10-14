@@ -17,7 +17,7 @@ interface SettingsResponse {
 }
 
 export default function SettingsPage() {
-    const { data: session } = useSession();
+    const { data: session, status } = useSession();
     const initialCached = getCachedData<SettingsResponse>('/api/user/settings');
     const [username, setUsername] = useState<string>(() => initialCached?.username || '');
     const [totalScore, setTotalScore] = useState<number>(() => initialCached?.totalScore || 0);
@@ -63,10 +63,12 @@ export default function SettingsPage() {
     }, []);
 
     useEffect(() => {
-        if (session) {
-            fetchSettings();
+        if (status === 'unauthenticated') {
+            setLoading(false);
+            return;
         }
-    }, [fetchSettings, session]);
+        fetchSettings();
+    }, [fetchSettings, status]);
 
     useEffect(() => {
         if (!session) return;

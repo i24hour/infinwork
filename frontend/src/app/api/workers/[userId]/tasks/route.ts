@@ -23,14 +23,19 @@ export async function GET(
         }
 
         await connectDB();
-        await autoCancelExpiredActiveTasks({ userId: targetUserId });
-        await recomputeChainPointsForUsers([targetUserId]);
 
-        const user = await User.findOne({ email: targetUserId }).lean() as any;
+        // Run background maintenance asynchronously so public worker profile loads in a single parallel DB round-trip
+        autoCancelExpiredActiveTasks({ userId: targetUserId }).catch((err) =>
+            console.error('autoCancelExpiredActiveTasks failed in worker tasks route:', err)
+        );
+        recomputeChainPointsForUsers([targetUserId]).catch((err) =>
+            console.error('recomputeChainPointsForUsers failed in worker tasks route:', err)
+        );
 
-        const tasks = await ITimeTask.find({
-            userId: targetUserId
-        }).sort({ createdAt: -1 });
+        const [user, tasks] = await Promise.all([
+            User.findOne({ email: targetUserId }).lean() as Promise<any>,
+            ITimeTask.find({ userId: targetUserId }).sort({ createdAt: -1 }).lean(),
+        ]);
 
         return NextResponse.json({ 
             tasks, 
