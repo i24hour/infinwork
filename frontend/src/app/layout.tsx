@@ -1,8 +1,9 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/components/AuthProvider";
+import { PwaRegister } from "@/components/PwaRegister";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -13,6 +14,12 @@ const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 });
+
+export const viewport: Viewport = {
+  themeColor: "#000000",
+  width: "device-width",
+  initialScale: 1,
+};
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://infinwork.app"),
@@ -38,9 +45,17 @@ export const metadata: Metadata = {
     { name: "Infinwork Team" }
   ],
   creator: "Infinwork",
+  applicationName: "infinWORK",
+  appleWebApp: {
+    capable: true,
+    title: "infinWORK",
+    statusBarStyle: "black-translucent",
+  },
   icons: {
     icon: [
-      { url: "/favicon.ico", sizes: "48x48", type: "image/x-icon" }
+      { url: "/favicon.ico", sizes: "48x48", type: "image/x-icon" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
     ],
     shortcut: "/favicon.ico",
     apple: [
@@ -101,6 +116,7 @@ export default function RootLayout({
         <AuthProvider>
           {children}
         </AuthProvider>
+        <PwaRegister />
         <Script
           id="structured-data"
           type="application/ld+json"
