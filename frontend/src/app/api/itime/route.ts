@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
+import { getAuthorizedEmail } from '@/lib/mobile-auth';
 import ITimeTask from '@/models/ITimeTask';
 import User from '@/models/User';
 import { autoCancelExpiredActiveTasks } from '@/lib/itime-runtime';
@@ -16,13 +15,11 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(_request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
+        const email = await getAuthorizedEmail(_request);
 
-        if (!session?.user?.email) {
+        if (!email) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
-
-        const email = session.user.email;
         await connectDB();
 
         // Auto-register user and check runtime limits in the background so GET /api/itime returns with 1 fast query
@@ -50,9 +47,9 @@ export async function GET(_request: NextRequest) {
 
 export async function POST(request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
+        const email = await getAuthorizedEmail(request);
 
-        if (!session?.user?.email) {
+        if (!email) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
@@ -70,7 +67,7 @@ export async function POST(request: NextRequest) {
 
         const task = await ITimeTask.create({
             ...sanitized.value,
-            userId: session.user.email,
+            userId: email,
             startTime: sanitized.value.startTime ?? Date.now(),
             pausedElapsed: sanitized.value.pausedElapsed ?? 0,
             enabled: sanitized.value.enabled ?? true,
@@ -87,9 +84,9 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
+        const email = await getAuthorizedEmail(request);
 
-        if (!session?.user?.email) {
+        if (!email) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
@@ -115,10 +112,10 @@ export async function PUT(request: NextRequest) {
         }
 
         await connectDB();
-        await autoCancelExpiredActiveTasks({ userId: session.user.email });
+        await autoCancelExpiredActiveTasks({ userId: email });
 
         const task = await ITimeTask.findOneAndUpdate(
-            { _id, userId: session.user.email },
+            { _id, userId: email },
             { $set: sanitized.value },
             { new: true }
         );
@@ -136,9 +133,9 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
+        const email = await getAuthorizedEmail(request);
 
-        if (!session?.user?.email) {
+        if (!email) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
@@ -153,7 +150,7 @@ export async function DELETE(request: NextRequest) {
 
         const task = await ITimeTask.findOneAndDelete({
             _id: id,
-            userId: session.user.email,
+            userId: email,
         });
 
         if (!task) {

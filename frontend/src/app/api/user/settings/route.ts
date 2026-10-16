@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+import { getAuthorizedEmail } from '@/lib/mobile-auth';
 import connectDB from '@/lib/mongodb';
 import User from '@/models/User';
 import ITimeTask from '@/models/ITimeTask';
@@ -9,14 +10,12 @@ import { syncGithubForUserByEmail } from '@/lib/github-sync';
 import { getScoreBreakdownAtTime } from '@/lib/score';
 import { recomputeChainPointsForUsers } from '@/lib/chain-points';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
-        if (!session?.user?.email) {
+        const email = await getAuthorizedEmail(request);
+        if (!email) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
-
-        const email = session.user.email;
         await connectDB();
 
         // Trigger GitHub auto-sync and chain points recomputation asynchronously so settings/sidebar reads never block
