@@ -3,8 +3,12 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
 import SFTracker from '@/models/SFTracker';
+import { isPlainObject, readJsonBody } from '@/lib/validate';
 
 export const dynamic = 'force-dynamic';
+
+const MAX_TARGET_LENGTH = 200;
+const MAX_CONDITION_LENGTH = 1000;
 
 export async function GET(request: NextRequest) {
     try {
@@ -30,11 +34,23 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const body = await request.json();
-        const { target, successCondition } = body;
+        const parsed = await readJsonBody<unknown>(request);
+        if (!parsed.ok) {
+            return NextResponse.json({ error: parsed.error }, { status: 400 });
+        }
+        if (!isPlainObject(parsed.body)) {
+            return NextResponse.json({ error: 'Invalid target payload' }, { status: 400 });
+        }
 
-        if (!target?.trim() || !successCondition?.trim()) {
+        const { target, successCondition } = parsed.body;
+        if (typeof target !== 'string' || typeof successCondition !== 'string' || !target.trim() || !successCondition.trim()) {
             return NextResponse.json({ error: 'Target and success condition are required' }, { status: 400 });
+        }
+        if (target.trim().length > MAX_TARGET_LENGTH) {
+            return NextResponse.json({ error: `Target must be at most ${MAX_TARGET_LENGTH} characters` }, { status: 400 });
+        }
+        if (successCondition.trim().length > MAX_CONDITION_LENGTH) {
+            return NextResponse.json({ error: `Success condition must be at most ${MAX_CONDITION_LENGTH} characters` }, { status: 400 });
         }
 
         await connectDB();

@@ -10,7 +10,6 @@ import {
 import { classifyPostWithLlm } from '@/lib/rank-politician/classify-llm';
 import { isLlmConfigured } from '@/lib/llm';
 import {
-    fetchPoliticianPostsFromGoogleNewsRss,
     getFirecrawlCreditUsage,
     isFirecrawlCreditError,
     parsePostsFromFirecrawl,
@@ -75,7 +74,9 @@ function isFreshSuccess(politician: { lastScrapeStatus?: string; lastScrapedAt?:
 }
 
 function isCreditErrorMessage(message?: string | null) {
-    return /insufficient credits|not enough credits|firecrawl/i.test(String(message || ''));
+    return /insufficient credits|not enough credits|credit(s)? (?:exhausted|remaining)/i.test(
+        String(message || '')
+    );
 }
 
 function isInErrorBackoff(politician: { lastScrapeStatus?: string; lastScrapedAt?: Date | string | null; lastScrapeError?: string | null }) {
@@ -112,24 +113,40 @@ export interface RankPoliticianRunResult {
 
 async function recomputePoliticianStats(politicianId: string) {
     const posts = await PoliticianPost.find({ politicianId })
-        .select('category score')
+        .select('category score postUrl')
         .lean();
 
+    // Only actual X/Twitter status posts count. Older deployments stored
+    // Google News headlines and profile-shell blocks with a profile URL; those
+    // must never influence a minister's score.
+    const scorablePosts = posts.filter((post: any) => {
+        const url = String(post.postUrl || '');
+        return /(?:x\.com|twitter\.com)\/[^/]+\/status\/\d+/i.test(url);
+    });
+
     const stats = aggregatePoliticianStats(
-        posts.map((post: any) => ({
+        scorablePosts.map((post: any) => ({
             category: (post.category || 'unknown') as PostCategory,
             score: Number(post.score || 0),
         }))
     );
 
-    await Politician.findByIdAndUpdate(politicianId, {
-        $set: {
-            stats: {
-                ...stats,
-                lastScoredAt: new Date(),
-            },
+    const update: Record<string, unknown> = {
+        stats: {
+            ...stats,
+            lastScoredAt: new Date(),
         },
-    });
+    };
+
+    // Old deployments may only have news headlines / profile-shell rows. They
+    // are no longer scorable, so don't keep advertising the profile as
+    // "successfully scraped" with a clean score.
+    if (posts.length > 0 && scorablePosts.length === 0) {
+        update.lastScrapeStatus = 'partial';
+        update.lastScrapeError = 'No verifiable X posts remain; re-scrape this profile.';
+    }
+
+    await Politician.findByIdAndUpdate(politicianId, { $set: update });
 
     return stats;
 }
@@ -249,21 +266,10 @@ async function fetchPoliticianCandidatesWithFallback(
         }
     }
 
-    // Tier 3: Google News RSS fallback (free, always available)
-    try {
-        const rssCandidates = await fetchPoliticianPostsFromGoogleNewsRss({
-            name: politician.name,
-            xHandle: politician.xHandle,
-            portfolio: politician.portfolio,
-        });
-        if (rssCandidates.length > 0) {
-            return { candidates: rssCandidates, provider: 'google-news-rss' };
-        }
-        errors.push('RSS returned 0 items');
-    } catch (err: any) {
-        errors.push(`RSS: ${err?.message || 'failed'}`);
-    }
-
+    // Google News headlines are NOT the politician's posts. They used to be
+    // classified and scored as if the minister wrote them, which published
+    // headlines (and press criticism) as scored X posts. If X cannot be read,
+    // report the failure instead of inventing attributed content.
     throw new Error(`All scrape providers failed (${errors.join(' | ')})`);
 }
 
@@ -412,7 +418,9 @@ export async function runRankPoliticianScrapeBatch(
         processed: results.length,
         successCount: results.filter((r) => r.status === 'success').length,
         errorCount: results.filter((r) => r.status === 'error').length,
-        skippedCount: results.filter((r) => r.status === 'skipped').length,
+        skippedCount:
+            results.filter((r) => r.status === 'skipped').length +
+            Math.max(0, candidates.length - politicians.length),
         results,
     };
 }

@@ -44,7 +44,9 @@ export async function llmCompletion(
         apiKey: config.apiKey,
         baseURL: config.baseURL,
         timeout: config.timeoutMs,
-        maxRetries: 1,
+        // Classification falls back to keywords; don't burn the batch
+        // timeout retrying a failing LLM.
+        maxRetries: 0,
     });
 
     const model = options.model || config.model;

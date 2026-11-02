@@ -31,8 +31,9 @@ Required environment variables (see your Vercel project settings):
 - `NEXTAUTH_URL`
 - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` (optional, for Google sign-in)
 - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` (optional, for GitHub sync)
-- `FIRECRAWL_API_KEY` (for Rank Politician X scrape)
-- `CRON_SECRET` (protects `/api/cron/rank-politician`)
+- `JINA_API_KEY` (optional, raises Rank Politician scrape rate limits)
+- `FIRECRAWL_API_KEY` (optional paid fallback for Rank Politician)
+- `CRON_SECRET` (protects `/api/cron/rank-politician` and `/api/cron/ping`)
 
 ### Rank Politician scrape schedule
 
@@ -50,6 +51,12 @@ Required environment variables (see your Vercel project settings):
 ```
 
 ## Mobile (Android)
+
+The canonical Android client is the native Kotlin/Compose app in `mobile/`.
+It signs in through `/api/mobile/auth/start` and uses a bearer token.
+
+`frontend/android` is the older Capacitor wrapper and is not the app the
+mobile-auth handoff targets:
 
 ```bash
 cd frontend

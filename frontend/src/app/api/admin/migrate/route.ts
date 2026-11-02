@@ -4,7 +4,7 @@ import User from '@/models/User';
 import { requireAdminSession } from '@/lib/admin';
 import { buildDefaultUsernameFromEmail, getAvailableUsername } from '@/lib/username';
 
-export async function GET() {
+export async function POST() {
     try {
         const admin = await requireAdminSession();
         if (!admin.ok) {

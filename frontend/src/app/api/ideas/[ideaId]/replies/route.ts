@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
+import { getAuthorizedEmail } from '@/lib/mobile-auth';
 import Idea from '@/models/Idea';
 import Reply from '@/models/Reply';
 import User from '@/models/User';
-import { isValidObjectIdString } from '@/lib/validate';
+import {
+    isPlainObject,
+    isValidObjectIdString,
+    readJsonBody,
+} from '@/lib/validate';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,7 +51,7 @@ export async function GET(
     { params }: { params: Promise<{ ideaId: string }> }
 ) {
     try {
-        const session = await getServerSession(authOptions);
+        const userEmail = await getAuthorizedEmail(request);
         const { ideaId } = await params;
 
         if (!isValidObjectIdString(ideaId)) {
@@ -62,14 +65,15 @@ export async function GET(
             return NextResponse.json({ error: 'Idea not found' }, { status: 404 });
         }
 
-        const userEmail = session?.user?.email;
-        const isIdeaOwner = userEmail === idea.createdBy;
+        const isIdeaOwner = userEmail
+            ? userEmail.toLowerCase() === String(idea.createdBy).toLowerCase()
+            : false;
 
         if (!idea.isPublic && !isIdeaOwner) {
             return NextResponse.json({ error: 'Idea not found' }, { status: 404 });
         }
 
-        let query: any = { ideaId };
+        const query: Record<string, unknown> = { ideaId };
 
         if (isIdeaOwner) {
             // Idea owner can see ALL replies to their idea
@@ -91,13 +95,24 @@ export async function GET(
         const userEmails = Array.from(new Set(replies.map((r: any) => r.createdBy)));
         const users = await User.find({ email: { $in: userEmails } }, 'email username').lean();
         const userMap = users.reduce((acc: any, user: any) => {
-            acc[user.email] = user.username || user.email;
+            acc[user.email] = user.username || String(user.email).split('@')[0];
             return acc;
         }, {});
 
+        const viewerEmail = userEmail?.toLowerCase();
         const repliesWithUsernames = replies.map((r: any) => ({
-            ...r,
-            username: userMap[r.createdBy] || r.createdBy,
+            _id: r._id,
+            ideaId: r.ideaId,
+            content: r.content,
+            isPublic: r.isPublic,
+            imageUrl: r.imageUrl,
+            isEdited: r.isEdited,
+            createdAt: r.createdAt,
+            updatedAt: r.updatedAt,
+            isOwner: Boolean(viewerEmail) && String(r.createdBy).toLowerCase() === viewerEmail,
+            username: userMap[r.createdBy] || 'Anonymous',
+            // Display alias for already-open clients; not an email.
+            createdBy: userMap[r.createdBy] || 'Anonymous',
         }));
 
         return NextResponse.json({ replies: repliesWithUsernames });
@@ -113,8 +128,8 @@ export async function POST(
     { params }: { params: Promise<{ ideaId: string }> }
 ) {
     try {
-        const session = await getServerSession(authOptions);
-        if (!session?.user?.email) {
+        const email = await getAuthorizedEmail(request);
+        if (!email) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
@@ -124,8 +139,14 @@ export async function POST(
             return NextResponse.json({ error: 'Invalid idea ID' }, { status: 400 });
         }
 
-        const body = await request.json();
-        const { content, isPublic, imageUrl } = body;
+        const parsed = await readJsonBody<unknown>(request);
+        if (!parsed.ok) {
+            return NextResponse.json({ error: parsed.error }, { status: 400 });
+        }
+        if (!isPlainObject(parsed.body)) {
+            return NextResponse.json({ error: 'Invalid reply payload' }, { status: 400 });
+        }
+        const { content, isPublic, imageUrl } = parsed.body;
         const trimmedContent = typeof content === 'string' ? content.trim() : '';
 
         if (typeof content !== 'undefined' && typeof content !== 'string') {
@@ -156,19 +177,30 @@ export async function POST(
             return NextResponse.json({ error: 'Idea not found' }, { status: 404 });
         }
 
-        if (!idea.isPublic && idea.createdBy !== session.user.email) {
+        if (!idea.isPublic && String(idea.createdBy).toLowerCase() !== email.toLowerCase()) {
             return NextResponse.json({ error: 'Idea not found' }, { status: 404 });
         }
 
         const reply = await Reply.create({
             ideaId,
             content: trimmedContent,
-            createdBy: session.user.email,
+            createdBy: email,
             isPublic: isPublic !== false, // default true
             imageUrl: normalizedImageUrl,
         });
 
-        return NextResponse.json({ reply }, { status: 201 });
+        const safeReply = reply.toObject();
+        delete safeReply.createdBy;
+        const replyUsername = email.split('@')[0];
+        return NextResponse.json({
+            reply: {
+                ...safeReply,
+                isOwner: true,
+                username: replyUsername,
+                // Display alias for already-open clients; not an email.
+                createdBy: replyUsername,
+            },
+        }, { status: 201 });
     } catch (error) {
         console.error('Error creating reply:', error);
         return NextResponse.json({ error: 'Failed to create reply' }, { status: 500 });

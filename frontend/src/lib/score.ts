@@ -10,6 +10,8 @@ export interface ScoreTask {
     enabled: boolean;
     completed: boolean;
     completedAt?: number;
+    /** Set when the 100-hour runtime guard cancels a task. */
+    cancelledAt?: number;
 }
 
 export interface ScoreBreakdown {
@@ -92,7 +94,14 @@ export function computeBaseScore(tasks: ScoreTask[], t: number): number {
     let completedTasksHours = 0;
 
     for (const task of tasks) {
-        const taskStartTime = task.events?.[0]?.timestamp ?? task.startTime;
+        // Runtime-cancelled tasks are a safety stop, not a failed task. Counting
+        // them permanently damaged completion rate and average speed.
+        if (task.cancelledAt) continue;
+
+        const firstEvent = task.events?.[0];
+        const taskStartTime = firstEvent?.type === 'start'
+            ? firstEvent.timestamp
+            : (task.startTime || firstEvent?.timestamp);
         if (!taskStartTime || taskStartTime > t) continue;
 
         totalTasks++;
@@ -137,7 +146,9 @@ export function computeBaseScore(tasks: ScoreTask[], t: number): number {
                 taskActiveMs += (t - lastStartTime);
             }
 
-            if (task.pausedElapsed > 0 && syntheticEvents.length > 0 && lastStartTime === 0) {
+            // Events that do not begin with a start carry pre-event accumulated
+            // time in pausedElapsed. The client and runtime use the same rule.
+            if (task.pausedElapsed > 0 && syntheticEvents[0]?.type !== 'start') {
                 taskActiveMs += (task.pausedElapsed * 1000);
             }
 
@@ -167,7 +178,12 @@ function getAllActiveIntervals(tasks: ScoreTask[], t: number) {
     const allIntervals: { start: number; end: number }[] = [];
 
     for (const task of tasks) {
-        const taskStartTime = task.events?.[0]?.timestamp ?? task.startTime;
+        // Cancelled tasks are excluded from base-score counts, but their active
+        // intervals still protect the idle penalty for the time they ran.
+        const firstEvent = task.events?.[0];
+        const taskStartTime = firstEvent?.type === 'start'
+            ? firstEvent.timestamp
+            : (task.startTime || firstEvent?.timestamp);
         if (!taskStartTime || taskStartTime > t) continue;
 
         const actualCompletedAt = getActualCompletedAt(task);
@@ -330,7 +346,10 @@ function getIdlePenaltyAtTime(tasks: ScoreTask[], t: number): number {
     const istOffsetMs = 5.5 * 3600 * 1000;
     const april1st2026Ist = Date.UTC(2026, 3, 1, 0, 0, 0, 0) - istOffsetMs;
     const firstTrackedTaskStart = tasks.reduce((earliest, task) => {
-        const taskStartTime = task.events?.[0]?.timestamp ?? task.startTime;
+        const firstEvent = task.events?.[0];
+        const taskStartTime = firstEvent?.type === 'start'
+            ? firstEvent.timestamp
+            : (task.startTime || firstEvent?.timestamp);
         if (!taskStartTime || taskStartTime > t) return earliest;
         return Math.min(earliest, taskStartTime);
     }, Number.POSITIVE_INFINITY);

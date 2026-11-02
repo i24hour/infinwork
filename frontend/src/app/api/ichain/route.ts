@@ -24,9 +24,14 @@ export async function GET(request: NextRequest) {
         const chainDocs = await Chain.find().sort({ maxTime: -1, createdAt: -1 });
 
         await Promise.all(chainDocs.map(async (chainDoc: any) => {
-            if (enforceChainVisitWindow(chainDoc, now)) {
-                await chainDoc.save();
-                await recomputeChainPointsForUsers((chainDoc.members || []).map((member: any) => member.userId));
+            try {
+                if (enforceChainVisitWindow(chainDoc, now)) {
+                    await chainDoc.save();
+                    await recomputeChainPointsForUsers((chainDoc.members || []).map((member: any) => member.userId));
+                }
+            } catch (chainError) {
+                // One broken chain must not take down the whole list.
+                console.error('Chain visit enforcement failed:', chainDoc?._id, chainError);
             }
         }));
 
@@ -45,10 +50,11 @@ export async function GET(request: NextRequest) {
                 // Auto-repair bugged legacy chains that paused into 'Idle' instead of 'Burst'
                 chain.status = 'Burst';
                 if (!chain.maxTime) chain.maxTime = chain.totalTime;
+                if (!chain.burstAt) chain.burstAt = now;
                 // Fire and forget background fix
                 Chain.updateOne(
-                    { _id: chain._id }, 
-                    { $set: { status: 'Burst', maxTime: chain.maxTime } }
+                    { _id: chain._id },
+                    { $set: { status: 'Burst', maxTime: chain.maxTime, burstAt: chain.burstAt } }
                 ).catch(console.error);
             }
             return chain;

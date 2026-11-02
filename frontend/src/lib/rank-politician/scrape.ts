@@ -348,31 +348,10 @@ export function parsePostsFromFirecrawl(
         }
     }
 
-    // Path 4: Last resort markdown blocks
-    if (candidates.size === 0 && markdown.trim()) {
-        const mainTimeline = markdown.split(/\n##\s+See\s+/i)[0] || markdown;
-        const blocks = mainTimeline
-            .split(/\n{2,}/)
-            .map((block) => cleanPostText(block))
-            .filter(
-                (block) =>
-                    block.length >= 40 &&
-                    !isNoiseLine(block) &&
-                    !/^latest posts$/i.test(block) &&
-                    !/^(title|url source|markdown content):/i.test(block)
-            );
-
-        for (const text of blocks.slice(0, 20)) {
-            const externalId = `x:${normalizedHandle}:block:${hashText(text)}`;
-            if (candidates.has(externalId)) continue;
-            candidates.set(externalId, {
-                externalId,
-                text: text.slice(0, 4000),
-                postUrl: `https://x.com/${normalizedHandle}`,
-                rawMarkdown: text.slice(0, 2500),
-            });
-        }
-    }
+    // Do NOT ingest arbitrary markdown blocks here. That "last resort" path
+    // published profile chrome ("Replies Reposts Media", follower counts) as
+    // scored posts and attributed them to the politician. A candidate must
+    // carry an x.com/<expected-handle>/status/<id> URL.
 
     return Array.from(candidates.values()).slice(0, 40);
 }

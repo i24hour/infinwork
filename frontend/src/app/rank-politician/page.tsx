@@ -61,6 +61,7 @@ interface LeaderboardMeta {
     totalActive: number;
     withPosts: number;
     scrapeSuccess: number;
+    scrapePartial?: number;
     scrapeError: number;
     neverScraped: number;
     avgOnPortfolioPct: number;
@@ -327,8 +328,8 @@ export default function RankPoliticianPage() {
                         <div className={`${panel} p-5`}>
                             <h3 className={`text-sm font-medium mb-2 ${muted}`}>Scrape health</h3>
                             <p className={`text-sm font-medium ${heading}`}>
-                                {meta?.scrapeSuccess ?? 0} ok · {meta?.scrapeError ?? 0} fail ·{' '}
-                                {meta?.neverScraped ?? 0} pending
+                                {meta?.scrapeSuccess ?? 0} ok · {meta?.scrapePartial ?? 0} partial ·{' '}
+                                {meta?.scrapeError ?? 0} fail · {meta?.neverScraped ?? 0} pending
                             </p>
                         </div>
                     </div>

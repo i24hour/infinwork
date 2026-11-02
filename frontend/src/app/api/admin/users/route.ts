@@ -37,11 +37,14 @@ export async function PATCH(request: NextRequest) {
 
         const body = await request.json().catch(() => ({}));
         const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
-        const isAdmin = Boolean(body?.isAdmin);
 
         if (!email || !email.includes('@')) {
             return NextResponse.json({ error: 'Valid email is required' }, { status: 400 });
         }
+        if (typeof body?.isAdmin !== 'boolean') {
+            return NextResponse.json({ error: 'isAdmin must be a boolean' }, { status: 400 });
+        }
+        const isAdmin = body.isAdmin;
 
         await connectDB();
 

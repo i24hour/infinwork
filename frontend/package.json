@@ -2,6 +2,9 @@
   "name": "frontend",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.6"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -9,6 +12,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:rank-keywords": "node --experimental-strip-types src/lib/rank-politician/score.keyword.test.ts",
+    "test:itime": "node --experimental-strip-types src/lib/itime.test.ts",
     "cap:sync": "npx cap sync android",
     "cap:open:android": "npx cap open android",
     "cap:copy": "npx cap copy android",

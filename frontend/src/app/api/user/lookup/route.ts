@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
+import { getAuthorizedEmail } from '@/lib/mobile-auth';
 import User from '@/models/User';
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -10,8 +9,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
-        if (!session?.user?.email) {
+        if (!(await getAuthorizedEmail(request))) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
@@ -35,7 +33,6 @@ export async function GET(request: NextRequest) {
             exists: !!user,
             user: user
                 ? {
-                    email: user.email,
                     username: user.username,
                     image: user.image,
                 }

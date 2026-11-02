@@ -34,11 +34,14 @@ export function getLlmConfig(): LlmConfig {
     const mode: LlmProviderMode = proxyBase ? 'litellm_proxy' : 'bedrock_mantle';
 
     const apiKey = (
-        process.env.AWS_BEARER_TOKEN_BEDROCK ||
-        process.env.LITELLM_API_KEY ||
-        process.env.BEDROCK_API_KEY ||
-        ''
-    ).trim();
+        mode === 'litellm_proxy'
+            ? (process.env.LITELLM_API_KEY ||
+                process.env.AWS_BEARER_TOKEN_BEDROCK ||
+                process.env.BEDROCK_API_KEY)
+            : (process.env.AWS_BEARER_TOKEN_BEDROCK ||
+                process.env.LITELLM_API_KEY ||
+                process.env.BEDROCK_API_KEY)
+    )?.trim() || '';
 
     const baseURL =
         proxyBase ||

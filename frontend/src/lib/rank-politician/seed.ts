@@ -152,13 +152,26 @@ export const POLITICIAN_SEEDS: PoliticianSeed[] = [
         name: 'Pralhad Joshi',
         slug: 'pralhad-joshi',
         party: 'BJP',
-        portfolio: 'Education / Consumer Affairs / Food & Public Distribution / New & Renewable Energy',
+        portfolio: 'Consumer Affairs / Food & Public Distribution / New & Renewable Energy',
         portfolioTopics: [
-            'education', 'school', 'university', 'nep', 'student', 'teacher',
             'consumer affairs', 'food distribution', 'pds', 'ration',
-            'renewable energy', 'solar', 'green hydrogen', 'shiksha',
+            'renewable energy', 'solar', 'green hydrogen',
         ],
         xHandle: 'JoshiPralhad',
+    },
+    {
+        name: 'Dharmendra Pradhan',
+        slug: 'dharmendra-pradhan',
+        party: 'BJP',
+        state: 'Odisha',
+        portfolio: 'Education / Skill Development & Entrepreneurship',
+        portfolioTopics: [
+            'education', 'school', 'college', 'university', 'nep', 'student',
+            'teacher', 'shiksha', 'skill development', 'skilling', 'vocational',
+            'apprenticeship', 'entrepreneurship', 'pariksha pe charcha',
+            'शिक्षा', 'स्कूल', 'विश्वविद्यालय', 'कौशल',
+        ],
+        xHandle: 'dpradhanbjp',
     },
     {
         name: 'Jitan Ram Manjhi',
@@ -169,7 +182,7 @@ export const POLITICIAN_SEEDS: PoliticianSeed[] = [
             'msme', 'small enterprise', 'medium enterprise', 'entrepreneur',
             'udyam', 'cottage industry',
         ],
-        xHandle: 'jitanrammanjhi',
+        xHandle: 'jitanrmanjhi',
     },
     {
         name: 'Lalan Singh',
@@ -180,7 +193,7 @@ export const POLITICIAN_SEEDS: PoliticianSeed[] = [
             'panchayati raj', 'panchayat', 'fisheries', 'animal husbandry',
             'dairy', 'livestock', 'fishermen',
         ],
-        xHandle: 'LalanSingh_',
+        xHandle: 'LalanSingh_1',
     },
     {
         name: 'Sarbananda Sonowal',
@@ -190,7 +203,7 @@ export const POLITICIAN_SEEDS: PoliticianSeed[] = [
         portfolioTopics: [
             'port', 'shipping', 'maritime', 'waterways', 'coastal', 'harbour',
         ],
-        xHandle: 'sonowal_s',
+        xHandle: 'sarbanandsonwal',
     },
     {
         name: 'Virendra Kumar',
@@ -201,7 +214,7 @@ export const POLITICIAN_SEEDS: PoliticianSeed[] = [
             'social justice', 'empowerment', 'sc', 'st', 'obc', 'disability',
             'welfare', 'samajik nyay',
         ],
-        xHandle: 'DrVirendraKumar',
+        xHandle: 'Drvirendrakum13',
     },
     {
         name: 'Kinjarapu Ram Mohan Naidu',
@@ -211,7 +224,7 @@ export const POLITICIAN_SEEDS: PoliticianSeed[] = [
         portfolioTopics: [
             'aviation', 'airport', 'airline', 'flight', 'civil aviation', 'udaan',
         ],
-        xHandle: 'RammohanNaidu',
+        xHandle: 'RamMNK',
     },
     {
         name: 'Jual Oram',
@@ -287,7 +300,7 @@ export const POLITICIAN_SEEDS: PoliticianSeed[] = [
             'women', 'child', 'nutrition', 'beti', 'empowerment',
             'welfare', 'mahila', 'bal',
         ],
-        xHandle: 'Annapurna_Devi',
+        xHandle: 'Annapurna4BJP',
     },
     {
         name: 'Kiren Rijiju',
@@ -341,7 +354,7 @@ export const POLITICIAN_SEEDS: PoliticianSeed[] = [
             'food processing', 'food industry', 'agro processing',
             'fpi', 'cold chain',
         ],
-        xHandle: 'ChiragPaswan',
+        xHandle: 'iChiragPaswan',
     },
     {
         name: 'C. R. Patil',

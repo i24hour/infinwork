@@ -203,175 +203,6 @@ function getFocusedCandleRange(candles: CandlestickData[], referenceValue?: numb
     };
 }
 
-/**
- * Calculate the performance score at a given point in time.
- * 
- * Formula:
- * Score = Completion_Rate × Speed_Score × Volume_Bonus × 1000
- * Completion_Rate = completed_tasks / total_tasks
- * Avg_Time_Per_Task = total_time_hrs / completed_tasks
- * Speed_Score = 1 / max(Avg_Time_Per_Task, 0.5)
- * Volume_Bonus = log10(completed_tasks + 1) × 2
- * 
- * - Total time includes completed task time plus active running time
- * - Completing a task adds to completed count and completed task hours
- * - Edge cases: no tasks or no completed tasks => score = 0
- */
-function computeBaseScore(tasks: ChartTask[], t: number): number {
-    let totalTasks = 0;
-    let completedTasks = 0;
-    let runningTasksHours = 0;
-    let completedTasksHours = 0;
-
-    for (const task of tasks) {
-        const taskStartTime = task.events?.[0]?.timestamp ?? task.startTime;
-        if (!taskStartTime || taskStartTime > t) continue;
-
-        totalTasks++;
-
-        let actualCompletedAt = task.completedAt;
-        if (!actualCompletedAt && task.events?.length) {
-            const completionEvent = [...task.events].reverse().find((event) => event.type === 'complete');
-            if (completionEvent) {
-                actualCompletedAt = completionEvent.timestamp;
-            }
-        }
-        if (task.completed && !actualCompletedAt && (!task.events || task.events.length === 0)) {
-            actualCompletedAt = task.startTime + (task.pausedElapsed * 1000);
-        }
-
-        const isCompletedByT = !!(task.completed && actualCompletedAt && actualCompletedAt <= t);
-
-        let taskHours = 0;
-        if (!task.events || task.events.length === 0) {
-            if (task.startTime && task.startTime <= t) {
-                if (isCompletedByT) {
-                    taskHours = (actualCompletedAt! - task.startTime) / (1000 * 3600);
-                } else {
-                    if (!task.completed && !task.enabled) {
-                        taskHours = (task.pausedElapsed * 1000) / (1000 * 3600);
-                    } else {
-                        taskHours = (t - task.startTime) / (1000 * 3600);
-                    }
-                }
-            }
-        } else {
-            const syntheticEvents = [...task.events];
-            if (syntheticEvents[0].type !== 'start' && task.startTime && task.startTime < syntheticEvents[0].timestamp) {
-                syntheticEvents.unshift({ type: 'start', timestamp: task.startTime });
-            }
-
-            let taskActiveMs = 0;
-            let isRunning = false;
-            let lastStartTime = 0;
-
-            for (const ev of syntheticEvents) {
-                if (ev.timestamp > t) break;
-                if (ev.type === 'start') {
-                    if (!isRunning) {
-                        isRunning = true;
-                        lastStartTime = ev.timestamp;
-                    }
-                } else if (ev.type === 'pause' || ev.type === 'complete') {
-                    if (isRunning) {
-                        taskActiveMs += (ev.timestamp - lastStartTime);
-                        isRunning = false;
-                    }
-                }
-            }
-
-            if (isRunning && !isCompletedByT && lastStartTime <= t) {
-                taskActiveMs += (t - lastStartTime);
-            }
-
-            if (task.pausedElapsed > 0 && syntheticEvents.length > 0 && lastStartTime === 0) {
-                taskActiveMs += (task.pausedElapsed * 1000);
-            }
-
-            taskHours = taskActiveMs / (1000 * 3600);
-        }
-
-        if (isCompletedByT) {
-            completedTasks++;
-            completedTasksHours += taskHours;
-        } else {
-            runningTasksHours += taskHours;
-        }
-    }
-
-    if (totalTasks === 0 || completedTasks === 0) return 0;
-
-    const completionRate = completedTasks / totalTasks;
-    const totalTimeHours = completedTasksHours + runningTasksHours;
-    const avgTimePerTask = totalTimeHours / completedTasks;
-    const clampedAvgTime = Math.max(avgTimePerTask, 0.5);
-    const speedScore = 1 / clampedAvgTime;
-    const volumeBonus = Math.log10(completedTasks + 1) * 2;
-    return completionRate * speedScore * volumeBonus * 1000;
-}
-
-function getAllActiveIntervals(tasks: ChartTask[], t: number) {
-    const allIntervals: { start: number; end: number }[] = [];
-    for (const task of tasks) {
-        const taskStartTime = task.events?.[0]?.timestamp ?? task.startTime;
-        if (!taskStartTime || taskStartTime > t) continue;
-
-        let actualCompletedAt = task.completedAt;
-        if (!actualCompletedAt && task.events?.length) {
-            const completionEvent = [...task.events].reverse().find((event) => event.type === 'complete');
-            if (completionEvent) {
-                actualCompletedAt = completionEvent.timestamp;
-            }
-        }
-        if (task.completed && !actualCompletedAt && (!task.events || task.events.length === 0)) {
-            actualCompletedAt = task.startTime + (task.pausedElapsed * 1000);
-        }
-
-        const isCompletedByT = !!(task.completed && actualCompletedAt && actualCompletedAt <= t);
-
-        if (!task.events || task.events.length === 0) {
-            if (task.startTime && task.startTime <= t) {
-                if (isCompletedByT) {
-                    allIntervals.push({ start: task.startTime, end: actualCompletedAt! });
-                } else {
-                    if (!task.completed && !task.enabled) {
-                        allIntervals.push({ start: task.startTime, end: task.startTime + task.pausedElapsed * 1000 });
-                    } else {
-                        allIntervals.push({ start: task.startTime, end: t });
-                    }
-                }
-            }
-        } else {
-            const syntheticEvents = [...task.events];
-            if (syntheticEvents[0].type !== 'start' && task.startTime && task.startTime < syntheticEvents[0].timestamp) {
-                syntheticEvents.unshift({ type: 'start', timestamp: task.startTime });
-            }
-
-            let isRunning = false;
-            let lastStartTime = 0;
-
-            for (const ev of syntheticEvents) {
-                if (ev.timestamp > t) break;
-                if (ev.type === 'start') {
-                    if (!isRunning) {
-                        isRunning = true;
-                        lastStartTime = ev.timestamp;
-                    }
-                } else if (ev.type === 'pause' || ev.type === 'complete') {
-                    if (isRunning) {
-                        allIntervals.push({ start: lastStartTime, end: ev.timestamp });
-                        isRunning = false;
-                    }
-                }
-            }
-
-            if (isRunning && !isCompletedByT && lastStartTime <= t) {
-                allIntervals.push({ start: lastStartTime, end: t });
-            }
-        }
-    }
-    return allIntervals;
-}
 
 function snapToInterval(timestamp: number, interval: CandleInterval): number {
     const d = new Date(timestamp);
@@ -411,9 +242,20 @@ export function PerformanceChart({
     const dailyScrollRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<'Candlestick'> | ISeriesApi<'Line'> | ISeriesApi<'Baseline'> | null>(null);
+    // lightweight-charts rejects updates older than the last point. Track the
+    // last time we wrote so the 1s live loop can never move backwards.
+    const lastRenderedTimeRef = useRef(0);
     const [hoveredDay, setHoveredDay] = useState<DailyScoreDay | null>(null);
     const [tooltipPosition, setTooltipPosition] = useState({ x: 240, y: 120 });
     const [isMobileViewport, setIsMobileViewport] = useState(false);
+    // Drives the "today" heatmap cell and the rolling-year totals. It used to
+    // be recomputed only at the 5 PM IST close, so today's cell froze.
+    const [nowTick, setNowTick] = useState(() => Date.now());
+
+    useEffect(() => {
+        const timer = setInterval(() => setNowTick(Date.now()), 60_000);
+        return () => clearInterval(timer);
+    }, []);
 
     useEffect(() => {
         const root = document.documentElement;
@@ -476,8 +318,8 @@ export function PerformanceChart({
                 baselineData: [] as BaselineData[],
             };
         }
-        const now = Date.now();
-        let intervalMs = getIntervalMs(interval);
+        const now = nowTick;
+        const intervalMs = getIntervalMs(interval);
         const snappedNow = snapToInterval(now, interval);
 
         let startTime = snappedNow - (24 * 60 * 60 * 1000);
@@ -493,8 +335,11 @@ export function PerformanceChart({
 
         let dataPointsCount = Math.floor((now - startTime) / intervalMs);
         if (dataPointsCount > 500) {
+            // Keep the selected interval and show the most recent 500 buckets.
+            // Changing intervalMs here made the candles silently disagree with
+            // the interval buttons and broke live updates.
+            startTime = snappedNow - (500 * intervalMs);
             dataPointsCount = 500;
-            intervalMs = (now - startTime) / 500;
         }
 
         const candleData: CandlestickData[] = [];
@@ -506,8 +351,8 @@ export function PerformanceChart({
             const T_end = Math.min(now, startTime + ((i + 1) * intervalMs));
             if (T_start >= now) break;
 
-            let open = getScoreAtTime(tasks, T_start, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory);
-            let close = getScoreAtTime(tasks, T_end, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory);
+            const open = getScoreAtTime(tasks, T_start, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory);
+            const close = getScoreAtTime(tasks, T_end, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory);
             let high = Math.max(open, close);
             let low = Math.min(open, close);
 
@@ -548,10 +393,17 @@ export function PerformanceChart({
         }
 
         return { candleData, lineData, baselineData };
-    }, [chartType, tasks, interval, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory]);
+    }, [chartType, tasks, interval, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory, nowTick]);
+
+    // Autoscale callbacks are installed once when the chart is created. Read
+    // the latest data through a ref so the y-axis doesn't scale to stale data.
+    const chartDataRef = useRef(chartData);
+    useEffect(() => {
+        chartDataRef.current = chartData;
+    }, [chartData]);
 
     const dailyScoreData = useMemo(() => {
-        const now = Date.now();
+        const now = nowTick;
         const todayStart = getIstDayStart(now);
         const firstVisibleDay = todayStart - (364 * DAY_MS);
         const firstDayOfWeek = new Date(firstVisibleDay + IST_OFFSET_MS).getUTCDay();
@@ -640,7 +492,7 @@ export function PerformanceChart({
             negativeTotal: Math.round(negativeTotal * 100) / 100,
             netTotal: Math.round(netTotal * 100) / 100,
         };
-    }, [tasks, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory, referenceNow]);
+    }, [tasks, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory, nowTick]);
 
     const updateDailyTooltip = (event: React.MouseEvent<HTMLElement>, day: DailyScoreDay) => {
         const rect = dailyPanelRef.current?.getBoundingClientRect();
@@ -757,7 +609,7 @@ export function PerformanceChart({
                 priceLineVisible: false,
                 lastValueVisible: false,
                 autoscaleInfoProvider: () => {
-                    const range = getFocusedCandleRange(chartData.candleData, previousCloseValue);
+                    const range = getFocusedCandleRange(chartDataRef.current.candleData, previousCloseValue);
                     if (!range) return null;
                     return { priceRange: range };
                 },
@@ -789,7 +641,7 @@ export function PerformanceChart({
                 priceLineVisible: false,
                 lastValueVisible: false,
                 autoscaleInfoProvider: () => {
-                    const vals = chartData.baselineData.map((d) => d.value);
+                    const vals = chartDataRef.current.baselineData.map((d) => d.value);
                     const range = getFocusedRange(vals, previousCloseValue);
                     if (!range) return null;
                     return {
@@ -814,9 +666,15 @@ export function PerformanceChart({
         if (chartType === 'candle') {
             (seriesRef.current as ISeriesApi<'Candlestick'>).setData(chartData.candleData);
             dataLength = chartData.candleData.length;
+            lastRenderedTimeRef.current = dataLength > 0
+                ? Number(chartData.candleData[dataLength - 1].time)
+                : 0;
         } else {
             (seriesRef.current as ISeriesApi<'Baseline'>).setData(chartData.baselineData);
             dataLength = chartData.baselineData.length;
+            lastRenderedTimeRef.current = dataLength > 0
+                ? Number(chartData.baselineData[dataLength - 1].time)
+                : 0;
         }
         
         // Instead of fitContent or hardcoded bar counts, we guarantee exactly 1 rolling month of history
@@ -855,36 +713,44 @@ export function PerformanceChart({
         
         if (chartType === 'candle') {
             (seriesRef.current as ISeriesApi<'Candlestick'>).setData(chartData.candleData);
+            lastRenderedTimeRef.current = chartData.candleData.length > 0
+                ? Number(chartData.candleData[chartData.candleData.length - 1].time)
+                : 0;
         } else {
             (seriesRef.current as ISeriesApi<'Baseline'>).setData(chartData.baselineData);
+            lastRenderedTimeRef.current = chartData.baselineData.length > 0
+                ? Number(chartData.baselineData[chartData.baselineData.length - 1].time)
+                : 0;
         }
     }, [chartData, chartType]);
 
     // Live native update cycle (No React state changes triggered!)
     useEffect(() => {
         if (chartType === 'daily') return;
-        const intervalMs = getIntervalMs(interval);
 
         const liveInterval = setInterval(() => {
             if (!seriesRef.current) return;
 
             const now = Date.now();
             const currentScore = getScoreAtTime(tasks, now, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory);
-            const snappedNow = snapToInterval(now, interval);
-            const timeSeconds = Math.floor(snappedNow / 1000) as Time;
+            const bucketTimeSeconds = Math.floor(snapToInterval(now, interval) / 1000);
+            const lastRendered = lastRenderedTimeRef.current;
+            const timeSeconds = Math.max(bucketTimeSeconds, lastRendered) as Time;
 
             if (chartType === 'line') {
                 const baselineSeries = seriesRef.current as ISeriesApi<'Baseline'>;
-                // Live update the right-most point
+                // Live update the right-most point without ever writing an
+                // older timestamp than the series already contains.
                 baselineSeries.update({
                     time: timeSeconds,
                     value: currentScore
                 });
+                lastRenderedTimeRef.current = Number(timeSeconds);
             } else {
                 const candleSeries = seriesRef.current as ISeriesApi<'Candlestick'>;
-                // We need to fetch the last known OHLC from chartData to update its close
-                const lastCandle = chartData.candleData[chartData.candleData.length - 1];
-                if (lastCandle && lastCandle.time === timeSeconds) {
+                const lastCandle = chartDataRef.current.candleData[chartDataRef.current.candleData.length - 1];
+                if (lastCandle && bucketTimeSeconds <= lastRendered) {
+                    // Same bucket: update the existing candle in place.
                     candleSeries.update({
                         time: timeSeconds,
                         open: lastCandle.open,
@@ -892,6 +758,7 @@ export function PerformanceChart({
                         low: Math.min(lastCandle.low, currentScore),
                         close: currentScore
                     });
+                    lastRenderedTimeRef.current = Number(timeSeconds);
                 } else {
                     // It rolled over to a new candle bucket, start a fresh one
                     candleSeries.update({
@@ -901,12 +768,13 @@ export function PerformanceChart({
                         low: currentScore,
                         close: currentScore
                     });
+                    lastRenderedTimeRef.current = Number(timeSeconds);
                 }
             }
         }, 1000);
 
         return () => clearInterval(liveInterval);
-    }, [tasks, interval, chartType, chartData, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory]);
+    }, [tasks, interval, chartType, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory]);
 
     return (
         <div className="bg-black rounded-2xl border border-white/10 p-6 flex flex-col w-full h-[500px]">

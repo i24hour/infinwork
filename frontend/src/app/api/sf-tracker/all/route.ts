@@ -1,45 +1,51 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 import SFTracker from '@/models/SFTracker';
 import User from '@/models/User';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: NextRequest) {
+export async function GET() {
     try {
         await connectDB();
 
-        // Fetch all raw SF Tracker docs
+        // Only users with at least one target belong on the board. The old
+        // version returned every account (and its email), including people who
+        // never used SF Tracker.
         const allTargets = await SFTracker.find().lean() as any[];
+        const targetUserIds = [...new Set(allTargets.map((target) => target.userId).filter(Boolean))];
 
-        // Fetch all users to map emails to profiles (username, image)
-        const allUsers = await User.find().lean() as any[];
-        
-        // Lazy registration not needed here, assuming they used the app
-        const emailToUserMap = new Map();
-        allUsers.forEach(u => {
-            emailToUserMap.set(u.email, {
-                username: u.username,
-                image: u.image
+        const allUsers = await User.find({ email: { $in: targetUserIds } })
+            .select('email username image')
+            .lean() as any[];
+
+        const emailToUserMap = new Map<string, { publicId: string; username: string; image: string | null }>();
+        allUsers.forEach((user) => {
+            emailToUserMap.set(user.email, {
+                publicId: user.username || String(user._id),
+                username: user.username || 'Anonymous',
+                image: user.image || null,
             });
         });
 
         const userStatsMap = new Map<string, any>();
 
-        // Init stats map with all users who have at least an entry, 
-        // OR we can include all users overall. Let's include users who have targets.
         for (const target of allTargets) {
             const userId = target.userId;
+            if (!userId) continue;
 
             if (!userStatsMap.has(userId)) {
                 const userData = emailToUserMap.get(userId);
                 userStatsMap.set(userId, {
-                    userId,
-                    username: userData?.username || userId.split('@')[0],
+                    publicId: userData?.publicId || null,
+                    // Backwards-compatible alias for already-open clients.
+                    userId: userData?.publicId || '',
+                    username: userData?.username || 'Anonymous',
                     image: userData?.image || null,
                     totalTasks: 0,
                     successTasks: 0,
                     failureTasks: 0,
+                    successRate: 0,
                 });
             }
 
@@ -53,27 +59,17 @@ export async function GET(request: NextRequest) {
             }
         }
 
-        // Add any existing users who have 0 targets so they show up on ranking with 0
-        allUsers.forEach(u => {
-            if (!userStatsMap.has(u.email)) {
-                userStatsMap.set(u.email, {
-                    userId: u.email,
-                    username: u.username || u.email.split('@')[0],
-                    image: u.image || null,
-                    totalTasks: 0,
-                    successTasks: 0,
-                    failureTasks: 0,
-                });
-            }
-        });
-
         const leaderboard = Array.from(userStatsMap.values());
+        for (const entry of leaderboard) {
+            entry.successRate = entry.totalTasks > 0
+                ? Math.round((entry.successTasks / entry.totalTasks) * 1000) / 10
+                : 0;
+        }
 
-        // Sort by Success Tasks descending, then by Total Tasks descending
+        // Sort by success rate (the UI says so), then by absolute successes.
         leaderboard.sort((a, b) => {
-            if (b.successTasks !== a.successTasks) {
-                return b.successTasks - a.successTasks;
-            }
+            if (b.successRate !== a.successRate) return b.successRate - a.successRate;
+            if (b.successTasks !== a.successTasks) return b.successTasks - a.successTasks;
             return b.totalTasks - a.totalTasks;
         });
 

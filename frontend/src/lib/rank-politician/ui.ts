@@ -97,7 +97,7 @@ export function publicScrapeError(error?: string | null): string | null {
         return 'Scraping failed. Please try again later.';
     }
     // Strip vendor names from any remaining message shown on-site.
-    let text = error
+    const text = error
         .replace(/\b(bedrock|kimi(?:\s*k\.?\s*2\.5)?|litellm|openai|firecrawl)\b/gi, 'service')
         .replace(/\s{2,}/g, ' ')
         .trim();

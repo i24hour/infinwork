@@ -6,8 +6,15 @@ import Chain from '@/models/IChain';
 import User from '@/models/User';
 import { enforceChainVisitWindow } from '@/lib/ichain';
 import { recomputeChainPointsForUsers } from '@/lib/chain-points';
+import {
+    isPlainObject,
+    isValidObjectIdString,
+    readJsonBody,
+} from '@/lib/validate';
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const MAX_CHAIN_MEMBERS = 50;
+const MAX_IDENTIFIER_LENGTH = 320;
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +25,9 @@ export async function GET(
     try {
         const session = await getServerSession(authOptions);
         const { chainId } = await params;
+        if (!isValidObjectIdString(chainId)) {
+            return NextResponse.json({ error: 'Invalid chain ID' }, { status: 400 });
+        }
         await connectDB();
         const chainDoc = await Chain.findById(chainId) as any;
         const chain = chainDoc?.toObject?.() || chainDoc;
@@ -80,6 +90,7 @@ export async function GET(
             chain.totalTime = refreshed.totalTime;
             chain.maxTime = refreshed.maxTime;
             chain.lastStartedAt = refreshed.lastStartedAt;
+            chain.burstAt = refreshed.burstAt;
             chain.members = refreshed.members;
         }
 
@@ -129,8 +140,33 @@ export async function PUT(
         }
 
         const { chainId } = await params;
-        const body = await request.json();
-        const { isWorking, newMemberIdentifier, parentId } = body;
+        if (!isValidObjectIdString(chainId)) {
+            return NextResponse.json({ error: 'Invalid chain ID' }, { status: 400 });
+        }
+
+        const parsed = await readJsonBody<unknown>(request);
+        if (!parsed.ok) {
+            return NextResponse.json({ error: parsed.error }, { status: 400 });
+        }
+        if (!isPlainObject(parsed.body)) {
+            return NextResponse.json({ error: 'Invalid chain payload' }, { status: 400 });
+        }
+
+        const { isWorking, newMemberIdentifier, parentId } = parsed.body;
+        if (isWorking !== undefined && typeof isWorking !== 'boolean') {
+            return NextResponse.json({ error: 'isWorking must be a boolean' }, { status: 400 });
+        }
+        if (
+            newMemberIdentifier !== undefined &&
+            (typeof newMemberIdentifier !== 'string' ||
+                newMemberIdentifier.trim().length === 0 ||
+                newMemberIdentifier.length > MAX_IDENTIFIER_LENGTH)
+        ) {
+            return NextResponse.json({ error: 'Invalid member identifier' }, { status: 400 });
+        }
+        if (parentId !== undefined && parentId !== null && typeof parentId !== 'string') {
+            return NextResponse.json({ error: 'Invalid parent member' }, { status: 400 });
+        }
 
         await connectDB();
 
@@ -144,18 +180,29 @@ export async function PUT(
             return NextResponse.json({ error: 'Not a member of this chain' }, { status: 403 });
         }
 
-        if (chain.status === 'Burst' && newMemberIdentifier) {
-            return NextResponse.json({ error: 'Cannot add members to a burst chain' }, { status: 400 });
-        }
+        const now = Date.now();
+        // Enforce the 3h visit window BEFORE checking Burst. Previously a
+        // request could be validated as Active, enforcement then burst the
+        // chain, and the same request started a member again.
+        enforceChainVisitWindow(chain, now);
 
         if (newMemberIdentifier) {
-            const memberIdToFind = newMemberIdentifier.trim().toLowerCase();
-            // Find the user to add
-            const userToAdd = await User.findOne({ 
+            if (chain.status === 'Burst') {
+                return NextResponse.json({ error: 'Cannot add members to a burst chain' }, { status: 400 });
+            }
+            if (chain.members.length >= MAX_CHAIN_MEMBERS) {
+                return NextResponse.json(
+                    { error: `A chain can have at most ${MAX_CHAIN_MEMBERS} members` },
+                    { status: 400 }
+                );
+            }
+
+            const memberIdToFind = (newMemberIdentifier as string).trim().toLowerCase();
+            const userToAdd = await User.findOne({
                 $or: [
                     { email: memberIdToFind },
                     { username: { $regex: `^${escapeRegex(memberIdToFind)}$`, $options: 'i' } }
-                ] 
+                ]
             }).lean() as any;
 
             if (!userToAdd?.email) {
@@ -164,9 +211,15 @@ export async function PUT(
 
             const userId = userToAdd.email;
 
-            // Check if already a member
             if (chain.members.find((m: any) => m.userId === userId)) {
                 return NextResponse.json({ error: 'User is already a member of this chain' }, { status: 400 });
+            }
+
+            const resolvedParentId = typeof parentId === 'string' && parentId.trim()
+                ? parentId.trim()
+                : session.user.email;
+            if (!chain.members.some((m: any) => m.userId === resolvedParentId)) {
+                return NextResponse.json({ error: 'Parent member not found in this chain' }, { status: 400 });
             }
 
             chain.members.push({
@@ -177,7 +230,7 @@ export async function PUT(
                 isWorking: false,
                 contributionTime: 0,
                 lastVisitAt: Date.now(),
-                parentId: parentId || session.user?.email,
+                parentId: resolvedParentId,
                 isStarter: false,
             });
 
@@ -186,11 +239,18 @@ export async function PUT(
         }
 
         if (chain.status === 'Burst') {
-            return NextResponse.json({ error: 'Chain has already burst' }, { status: 400 });
+            await chain.save();
+            if (isWorking === false) {
+                return NextResponse.json({ chain });
+            }
+            return NextResponse.json({ error: 'Chain has already burst' }, { status: 409 });
         }
 
-        const now = Date.now();
-        enforceChainVisitWindow(chain, now);
+        if (isWorking === undefined) {
+            await chain.save();
+            return NextResponse.json({ chain });
+        }
+
         const member = chain.members[memberIndex];
 
         // Calculation logic
@@ -279,6 +339,9 @@ export async function DELETE(
         }
 
         const { chainId } = await params;
+        if (!isValidObjectIdString(chainId)) {
+            return NextResponse.json({ error: 'Invalid chain ID' }, { status: 400 });
+        }
         await connectDB();
 
         const chain = await Chain.findById(chainId);
@@ -286,12 +349,20 @@ export async function DELETE(
             return NextResponse.json({ error: 'Chain not found' }, { status: 404 });
         }
 
-        // Only creator can delete, or if createdBy is not set, allow anyone for now (backward compatibility)
-        if (chain.createdBy && chain.createdBy !== session.user.email) {
+        // Only creator can delete. Legacy chains without createdBy are only
+        // deletable by a listed member (previously any signed-in user could).
+        const isCreator = Boolean(chain.createdBy) && chain.createdBy === session.user.email;
+        const isMember = chain.members.some((member: any) => member.userId === session.user.email);
+        const isLegacyMemberOwner = !chain.createdBy && isMember;
+        if (!isCreator && !isLegacyMemberOwner) {
             return NextResponse.json({ error: 'Only the creator can delete this chain' }, { status: 403 });
         }
 
+        const memberEmails = (chain.members || []).map((member: any) => member.userId);
         await Chain.findByIdAndDelete(chainId);
+        // Deleting a chain must also remove the points it awarded, otherwise
+        // users can farm blocks and delete the evidence.
+        await recomputeChainPointsForUsers(memberEmails);
         return NextResponse.json({ message: 'Chain deleted successfully' });
     } catch (error) {
         console.error('Error deleting chain:', error);

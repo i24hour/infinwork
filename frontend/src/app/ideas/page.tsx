@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Sidebar } from '@/components/Sidebar';
-import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
@@ -13,12 +12,14 @@ interface Idea {
     title: string;
     details: string;
     isPublic: boolean;
-    createdBy: string;
+    createdBy?: string;
+    isOwner?: boolean;
+    username?: string;
     createdAt: string;
 }
 
 export default function IdeasPage() {
-    const { data: session } = useSession();
+    const { data: session, status } = useSession();
     const router = useRouter();
     const initialCached = getCachedData<{ ideas?: Idea[] }>('/api/ideas');
     const [ideas, setIdeas] = useState<Idea[]>(() => initialCached?.ideas || []);
@@ -33,8 +34,12 @@ export default function IdeasPage() {
     const titleRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
+        if (status === 'loading') return;
+        // Drop cached private ideas whenever the account changes or the user
+        // signs out. The API returns only public ideas for guests.
+        setIdeas([]);
         fetchIdeas();
-    }, []);
+    }, [status, session?.user?.email]);
 
     useEffect(() => {
         if (formOpen) setTimeout(() => titleRef.current?.focus(), 60);
@@ -89,7 +94,11 @@ export default function IdeasPage() {
             return next;
         });
         try {
-            const res = await fetch(`/api/ideas/${idea._id}`, { method: 'PATCH' });
+            const res = await fetch(`/api/ideas/${idea._id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ isPublic: !idea.isPublic }),
+            });
             if (!res.ok) {
                 setIdeas(prev => {
                     const next = prev.map(i => i._id === idea._id ? { ...i, isPublic: idea.isPublic } : i);
@@ -121,17 +130,14 @@ export default function IdeasPage() {
         }
     };
 
-    const myEmail = session?.user?.email;
-
     const filteredIdeas = ideas.filter(idea => {
-        if (filter === 'mine') return idea.createdBy === myEmail;
+        if (filter === 'mine') return Boolean(idea.isOwner);
         if (filter === 'public') return idea.isPublic;
         return true;
     });
 
-    const myIdeasCount = ideas.filter(i => i.createdBy === myEmail).length;
     const publicCount = ideas.filter(i => i.isPublic).length;
-    const privateCount = ideas.filter(i => !i.isPublic && i.createdBy === myEmail).length;
+    const privateCount = ideas.filter(i => !i.isPublic && i.isOwner).length;
 
     return (
         <div className="flex flex-col md:flex-row min-h-screen bg-black">
@@ -260,7 +266,7 @@ export default function IdeasPage() {
                         <div className="flex flex-col gap-3">
                             <AnimatePresence initial={false}>
                                 {filteredIdeas.map(idea => {
-                                    const isOwner = myEmail === idea.createdBy;
+                                    const isOwner = Boolean(idea.isOwner);
                                     return (
                                         <motion.div
                                             key={idea._id}
@@ -289,7 +295,7 @@ export default function IdeasPage() {
                                                     <button
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                            isOwner && handleToggleVisibility(idea);
+                                                            if (isOwner) handleToggleVisibility(idea);
                                                         }}
                                                         disabled={!isOwner || togglingId === idea._id}
                                                         title={isOwner ? `Click to make ${idea.isPublic ? 'private' : 'public'}` : undefined}
@@ -321,7 +327,7 @@ export default function IdeasPage() {
                                             <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/[0.06]">
                                                 <div className="flex items-center gap-3">
                                                     <span className="text-xs text-zinc-700">
-                                                        {idea.createdBy.split('@')[0]}
+                                                        {idea.username || 'Anonymous'}
                                                     </span>
                                                     <span className="text-zinc-800">·</span>
                                                     <span className="text-xs text-zinc-700">

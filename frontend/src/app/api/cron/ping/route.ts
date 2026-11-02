@@ -1,13 +1,33 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 import mongoose from 'mongoose';
-import { ACTIVE_TASK_RUNTIME_LIMIT_SECONDS, autoCancelExpiredActiveTasks } from '@/lib/itime-runtime';
+import {
+    ACTIVE_TASK_RUNTIME_LIMIT_SECONDS,
+    autoCancelExpiredActiveTasks,
+    autoResumeDueTasks,
+} from '@/lib/itime-runtime';
 
 // This is an API route specifically designed to be hit by a cron job or uptime monitoring tool
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+function isAuthorizedCron(request: NextRequest): boolean {
+    const cronSecret = process.env.CRON_SECRET;
+    if (!cronSecret) {
+        return process.env.NODE_ENV !== 'production';
+    }
+
+    const authHeader = request.headers.get('authorization') || '';
+    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const headerSecret = request.headers.get('x-cron-secret') || '';
+    return bearer === cronSecret || headerSecret === cronSecret;
+}
+
+export async function GET(request: NextRequest) {
     try {
+        if (!isAuthorizedCron(request)) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
         console.log('[CRON] Ping received at', new Date().toISOString());
 
         // Connect to MongoDB
@@ -23,6 +43,11 @@ export async function GET() {
             autoCancelledCount = await autoCancelExpiredActiveTasks();
             if (autoCancelledCount > 0) {
                 console.log(`[CRON] Auto-cancelled ${autoCancelledCount} active task(s) after exceeding ${ACTIVE_TASK_RUNTIME_LIMIT_SECONDS / 3600} hours of runtime.`);
+            }
+
+            const autoResumedCount = await autoResumeDueTasks();
+            if (autoResumedCount > 0) {
+                console.log(`[CRON] Auto-resumed ${autoResumedCount} task(s) whose break ended.`);
             }
         }
 

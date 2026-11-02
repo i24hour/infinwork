@@ -17,9 +17,10 @@ function isAuthorizedCron(request: NextRequest): boolean {
     const authHeader = request.headers.get('authorization') || '';
     const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
     const headerSecret = request.headers.get('x-cron-secret') || '';
-    const querySecret = request.nextUrl.searchParams.get('secret') || '';
 
-    return bearer === cronSecret || headerSecret === cronSecret || querySecret === cronSecret;
+    // Never accept the secret in a URL query string; it leaks via logs,
+    // browser history and referrers.
+    return bearer === cronSecret || headerSecret === cronSecret;
 }
 
 export async function GET(request: NextRequest) {
@@ -56,10 +57,17 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        return NextResponse.json({
-            status: 'ok',
-            ...result,
-        });
+        // If we actually tried to scrape and every profile failed, report a
+        // failure so the GitHub Actions run turns red instead of green.
+        const allAttemptsFailed = result.processed > 0 && result.successCount === 0;
+        return NextResponse.json(
+            {
+                status: allAttemptsFailed ? 'error' : 'ok',
+                message: allAttemptsFailed ? 'Every scrape in this batch failed' : undefined,
+                ...result,
+            },
+            { status: allAttemptsFailed ? 502 : 200 }
+        );
     } catch (error: any) {
         console.error('[CRON] rank-politician failed:', error);
         return NextResponse.json(

@@ -61,26 +61,26 @@ export default function InfoPage() {
                         </h2>
 
                         <p className="text-zinc-400 text-sm leading-relaxed mb-6 relative z-10">
-                            Score decay is now intentionally softer. Short breaks are safe, and long idle windows reduce score gradually instead of sharply dropping momentum.
+                            The penalty only runs while no task is active. Starting any task stops the deduction immediately.
                         </p>
 
                         <div className="bg-white/5 rounded-xl p-5 border border-white/10 relative z-10">
                             <ul className="space-y-3 text-sm text-zinc-400">
                                 <li className="flex items-start gap-3">
                                     <span className="text-white mt-0.5">▪</span>
-                                    <span>First <strong className="text-white">8 minutes</strong> of every idle stretch have <strong className="text-white">0 penalty</strong>.</span>
+                                    <span>Rate: <strong className="text-white">0.001 points per second</strong> (about <strong className="text-white">3.6 points per hour</strong>).</span>
                                 </li>
                                 <li className="flex items-start gap-3">
                                     <span className="text-white mt-0.5">▪</span>
-                                    <span>After grace, decay is <strong className="text-white">0.0002/sec</strong> (about <strong className="text-white">0.72 points/hour</strong>) for the next 45 minutes.</span>
+                                    <span>The penalty timeline starts from the later of <strong className="text-white">1 Apr 2026, 00:00 IST</strong> and your first tracked task.</span>
                                 </li>
                                 <li className="flex items-start gap-3">
                                     <span className="text-white mt-0.5">▪</span>
-                                    <span>For very long idle streaks, decay becomes <strong className="text-white">0.00035/sec</strong> (about <strong className="text-white">1.26 points/hour</strong>) to discourage full drop-offs while staying gentle.</span>
+                                    <span>Multiple overlapping tasks count as a single active window — no double protection.</span>
                                 </li>
                                 <li className="flex items-start gap-3">
                                     <span className="text-white mt-0.5">▪</span>
-                                    <span>Start any task to immediately stop the deduction. Multiple overlapping tasks are counted as a single active window — no double protection.</span>
+                                    <span>Deleting all tasks removes the penalty timeline entirely. Tasks cancelled by the 100-hour safety cap are excluded from completion rate and speed.</span>
                                 </li>
                             </ul>
                         </div>

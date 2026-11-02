@@ -1,21 +1,20 @@
-import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
+import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
+import { getAuthorizedEmail } from '@/lib/mobile-auth';
 import User from '@/models/User';
 
-export async function POST() {
+export async function POST(request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
-        if (!session?.user?.email) {
+        const email = await getAuthorizedEmail(request);
+        if (!email) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
         await connectDB();
 
         // Find the user and unset all github fields + reset points checkpoint
-        await User.findOneAndUpdate(
-            { email: session.user.email },
+        const result = await User.updateOne(
+            { email },
             { 
                 $unset: { 
                     githubId: "", 
@@ -26,14 +25,20 @@ export async function POST() {
                     githubCommitsTotal: "",
                     githubPointsLastUpdatedAt: "",
                     githubPointsHistory: "",
-                    githubSyncLockUntil: ""
+                    githubSyncLockUntil: "",
+                    githubSyncLockId: "",
+                    githubSyncRetryAt: "",
+                    githubSyncError: "",
                 },
                 $set: {
                     points: 0  // Reset GitHub gamification points
                 }
-            },
-            { new: true }
+            }
         );
+
+        if (result.matchedCount === 0) {
+            return NextResponse.json({ error: 'User not found' }, { status: 404 });
+        }
 
         return NextResponse.json({ success: true });
     } catch (error) {

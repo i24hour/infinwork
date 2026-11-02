@@ -6,8 +6,11 @@ import ITimeTask from '@/models/ITimeTask';
 import User from '@/models/User';
 import { autoCancelExpiredActiveTasks } from '@/lib/itime-runtime';
 import { recomputeChainPointsForUsers } from '@/lib/chain-points';
+import { isValidObjectIdString } from '@/lib/validate';
 
 export const dynamic = 'force-dynamic';
+
+const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export async function GET(
     _request: NextRequest,
@@ -17,43 +20,71 @@ export async function GET(
         const session = await getServerSession(authOptions);
 
         const params = await context.params;
-        const targetUserId = decodeURIComponent(params.userId);
+        const identifier = params.userId.trim();
 
-        if (!targetUserId || typeof targetUserId !== 'string' || targetUserId.length > 320) {
+        if (!identifier || identifier.length > 320) {
             return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
         }
 
         await connectDB();
 
+        // Public links use a username (or Mongo id), never an email. Accept
+        // email too for old bookmarks.
+        const lookup: Record<string, unknown>[] = [
+            { username: { $regex: `^${escapeRegex(identifier)}$`, $options: 'i' } },
+            { email: { $regex: `^${escapeRegex(identifier)}$`, $options: 'i' } },
+        ];
+        if (isValidObjectIdString(identifier)) {
+            lookup.push({ _id: identifier });
+        }
+
+        const user = await User.findOne({ $or: lookup }).lean() as any;
+        if (!user?.email) {
+            return NextResponse.json({ error: 'User not found' }, { status: 404 });
+        }
+
+        const targetEmail = user.email;
+
         // Run background maintenance asynchronously so public worker profile loads in a single parallel DB round-trip
-        autoCancelExpiredActiveTasks({ userId: targetUserId }).catch((err) =>
+        autoCancelExpiredActiveTasks({ userId: targetEmail }).catch((err) =>
             console.error('autoCancelExpiredActiveTasks failed in worker tasks route:', err)
         );
-        recomputeChainPointsForUsers([targetUserId]).catch((err) =>
+        recomputeChainPointsForUsers([targetEmail]).catch((err) =>
             console.error('recomputeChainPointsForUsers failed in worker tasks route:', err)
         );
 
         // Owners see all of their tasks; everyone else only sees public tasks.
-        const isOwner = session?.user?.email?.toLowerCase() === targetUserId.toLowerCase();
+        const isOwner = session?.user?.email?.toLowerCase() === targetEmail.toLowerCase();
         const taskQuery = isOwner
-            ? { userId: targetUserId }
-            : { userId: targetUserId, isPublic: { $ne: false } };
+            ? { userId: targetEmail }
+            : {
+                userId: targetEmail,
+                isPublic: { $ne: false },
+                // Runtime-cancelled tasks are maintenance records, not work
+                // the owner chose to publish.
+                cancelledAt: { $exists: false },
+            };
 
-        const [user, tasks] = await Promise.all([
-            User.findOne({ email: targetUserId }).lean() as Promise<any>,
-            ITimeTask.find(taskQuery).sort({ createdAt: -1 }).lean(),
-        ]);
+        const tasks = await ITimeTask.find(taskQuery).sort({ createdAt: -1 }).lean();
+        // The task documents carry the owner's email in `userId`; the public
+        // worker page doesn't need it.
+        const safeTasks = tasks.map((task: any) => {
+            const copy = { ...task };
+            delete copy.userId;
+            return copy;
+        });
 
         return NextResponse.json({
-            tasks,
+            tasks: safeTasks,
             user: {
-                username: user?.username || targetUserId.split('@')[0],
-                image: user?.image || null,
-                points: user?.points || 0,
-                githubPointsLastUpdatedAt: user?.githubPointsLastUpdatedAt || user?.githubConnectedAt || null,
-                githubPointsHistory: user?.githubPointsHistory || [],
-                chainPoints: user?.chainPoints || 0,
-                chainPointsHistory: user?.chainPointsHistory || []
+                username: user.username || 'Anonymous',
+                image: user.image || null,
+                isOwner,
+                points: user.points || 0,
+                githubPointsLastUpdatedAt: user.githubPointsLastUpdatedAt || user.githubConnectedAt || null,
+                githubPointsHistory: user.githubPointsHistory || [],
+                chainPoints: user.chainPoints || 0,
+                chainPointsHistory: user.chainPointsHistory || []
             }
         });
     } catch (error) {

@@ -2,6 +2,13 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { resolveAuthSecret } from './auth-env';
 
 export const GITHUB_LINK_COOKIE = 'gh_link';
+/**
+ * Marker cookie set alongside the signed link token. It lets the NextAuth
+ * `signIn` callback distinguish "the user clicked Connect GitHub" from a
+ * normal GitHub sign-in, so a missing/expired link token can never silently
+ * replace the current session with a different GitHub account.
+ */
+export const GITHUB_LINK_ATTEMPT_COOKIE = 'gh_link_attempt';
 export const GITHUB_LINK_COOKIE_MAX_AGE_SECONDS = 300;
 
 interface GithubLinkPayload {

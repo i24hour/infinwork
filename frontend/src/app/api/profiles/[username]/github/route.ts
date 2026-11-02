@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 import User from '@/models/User';
-import { fetchGithubContributionCalendar } from '@/lib/github-contributions';
+import {
+    fetchGithubContributionCalendar,
+    hasGithubCalendarToken,
+} from '@/lib/github-contributions';
 
 export async function GET(
     _request: NextRequest,
@@ -20,7 +23,19 @@ export async function GET(
             return NextResponse.json({ connected: true, hidden: true, calendar: null });
         }
 
-        const calendar = await fetchGithubContributionCalendar(user.githubUsername);
+        if (!hasGithubCalendarToken(user.githubAccessToken)) {
+            return NextResponse.json({
+                connected: true,
+                hidden: false,
+                calendar: null,
+                error: 'not_configured',
+            });
+        }
+
+        const calendar = await fetchGithubContributionCalendar(
+            user.githubUsername,
+            user.githubAccessToken
+        );
         if (!calendar) {
             return NextResponse.json({ connected: true, hidden: false, calendar: null, error: 'Unable to load contributions' });
         }

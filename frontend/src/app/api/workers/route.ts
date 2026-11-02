@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
@@ -11,6 +12,9 @@ export const dynamic = 'force-dynamic';
 
 const WORKERS_CACHE_TTL_MS = 3000;
 const AUTO_CANCEL_MIN_INTERVAL_MS = 15000;
+
+const anonymousPublicId = (email: string) =>
+    `user-${createHash('sha256').update(email).digest('hex').slice(0, 12)}`;
 
 let cachedWorkersPayload: { workers: unknown[]; totalSignup: number; expiresAt: number } | null = null;
 let lastAutoCancelCheckAt = 0;
@@ -56,7 +60,7 @@ export async function GET() {
                 .lean() as Promise<any[]>,
         ]);
 
-        let allUsers = initialUsers;
+        const allUsers = initialUsers;
 
         // --- START LAZY REGISTRATION ---
         // If some users are missing from the User collection but have tasks,
@@ -66,20 +70,25 @@ export async function GET() {
 
         const missingEmails = taskUserEmails.filter((email) => !existingUserEmails.has(email));
         if (missingEmails.length > 0) {
-            // Upsert missing users in a single bulkWrite in the background instead of blocking sequential round-trips
-            User.bulkWrite(
-                missingEmails.map((email) => ({
-                    updateOne: {
-                        filter: { email },
-                        update: { $setOnInsert: { email } },
-                        upsert: true,
-                    },
-                })),
-                { ordered: false }
-            ).catch((e) => console.error('Error lazy-registering users in bulk:', e));
-
-            for (const email of missingEmails) {
-                allUsers.push({ email });
+            // Register missing users, then read their real ids/usernames so
+            // the public leaderboard never has to expose an email.
+            try {
+                await User.bulkWrite(
+                    missingEmails.map((email) => ({
+                        updateOne: {
+                            filter: { email },
+                            update: { $setOnInsert: { email } },
+                            upsert: true,
+                        },
+                    })),
+                    { ordered: false }
+                );
+                const createdUsers = await User.find({ email: { $in: missingEmails } })
+                    .select('email username image')
+                    .lean();
+                allUsers.push(...createdUsers);
+            } catch (e) {
+                console.error('Error lazy-registering users in bulk:', e);
             }
         }
         // --- END LAZY REGISTRATION ---
@@ -87,7 +96,10 @@ export async function GET() {
         const emailToUserMap = new Map();
         allUsers.forEach((u) => {
             emailToUserMap.set(u.email, {
-                username: u.username,
+                // Never publish the account email. Username is the public id;
+                // fall back to the Mongo id for accounts that haven't picked one.
+                publicId: u.username || String(u._id),
+                username: u.username || 'Anonymous',
                 image: u.image,
                 points: u.points || 0,
                 githubPointsLastUpdatedAt: u.githubPointsLastUpdatedAt || u.githubConnectedAt || null,
@@ -104,9 +116,13 @@ export async function GET() {
 
             if (!userStatsMap.has(userId)) {
                 const userData = emailToUserMap.get(userId);
+                const publicId = userData?.publicId || anonymousPublicId(userId);
                 userStatsMap.set(userId, {
-                    userId,
-                    username: userData?.username || userId.split('@')[0],
+                    publicId,
+                    // Backwards-compatible alias for already-open clients.
+                    // It is the username/id, never the email.
+                    userId: publicId,
+                    username: userData?.username || 'Anonymous',
                     image: userData?.image || null,
                     totalTasks: 0,
                     completedTasks: 0,
@@ -123,13 +139,18 @@ export async function GET() {
             }
 
             const stats = userStatsMap.get(userId);
-            stats.totalTasks += 1;
-            stats.tasks.push(task);
-
-            if (task.completed) {
-                stats.completedTasks += 1;
-            } else if (task.enabled) {
-                stats.runningTasks += 1;
+            // Keep cancelled tasks in `tasks` so the score can account for
+            // their active intervals, but don't count them as work items.
+            const safeTask = { ...task };
+            delete safeTask.userId;
+            stats.tasks.push(safeTask);
+            if (!task.cancelledAt) {
+                stats.totalTasks += 1;
+                if (task.completed) {
+                    stats.completedTasks += 1;
+                } else if (task.enabled) {
+                    stats.runningTasks += 1;
+                }
             }
 
             if (task.updatedAt && task.updatedAt > stats.lastActive) {

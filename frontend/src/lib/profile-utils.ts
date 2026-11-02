@@ -13,16 +13,23 @@ export function serializeProject(project: IUserProject): ProfileProject {
     };
 }
 
-export function serializePublicProfile(user: IUser): PublicProfile | null {
+export function serializePublicProfile(
+    user: IUser,
+    options: { includeGithubIdentity?: boolean } = {}
+): PublicProfile | null {
     if (!user.username) return null;
+
+    const showGithub = user.showGithubContributions !== false;
 
     return {
         username: user.username,
         image: user.image,
         headline: user.headline || '',
         bio: user.bio || '',
-        githubUsername: user.githubUsername,
-        showGithubContributions: user.showGithubContributions !== false,
+        // Hiding contributions should also hide the GitHub account from
+        // public visitors. The owner still needs it to manage the connection.
+        githubUsername: showGithub || options.includeGithubIdentity ? user.githubUsername : undefined,
+        showGithubContributions: showGithub,
         githubCommitsTotal: user.githubCommitsTotal || 0,
         points: user.points || 0,
         chainPoints: user.chainPoints || 0,

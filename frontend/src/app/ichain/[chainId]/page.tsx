@@ -21,6 +21,9 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
     const [isAddingMember, setIsAddingMember] = useState(false);
     const [isLightTheme, setIsLightTheme] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    // Ignore poll responses that were started just before a mutation; they can
+    // otherwise revert a Start/Stop click for a few seconds.
+    const lastMutationAtRef = useRef(0);
 
     useEffect(() => {
         const root = document.documentElement;
@@ -49,6 +52,7 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
 
             if (response.ok) {
                 const data = await response.json();
+                lastMutationAtRef.current = Date.now();
                 setChain(data.chain);
                 setIsAddMemberModalOpen(false);
                 setNewMemberIdentifier('');
@@ -122,10 +126,12 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
         reader.readAsDataURL(file);
     };
 
-    const fetchChain = async () => {
+    const fetchChain = async (force: boolean = false) => {
         try {
             const response = await fetch(`/api/ichain/${chainId}`);
             if (response.ok) {
+                // Drop a response that was in flight before a recent mutation.
+                if (!force && Date.now() - lastMutationAtRef.current < 2000) return;
                 const data = await response.json();
                 setChain(data.chain);
             }
@@ -146,6 +152,7 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
             });
             if (response.ok) {
                 const data = await response.json();
+                lastMutationAtRef.current = Date.now();
                 setChain(data.chain);
             }
         } catch (error) {

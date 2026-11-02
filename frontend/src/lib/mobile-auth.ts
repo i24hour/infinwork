@@ -47,8 +47,13 @@ async function emailFromAuthorizationHeader(header: string | null): Promise<stri
 
 /** Android sends Authorization: Bearer. The website keeps using the NextAuth cookie. */
 export async function getAuthorizedEmail(request: NextRequest): Promise<string | null> {
-    const fromBearer = await emailFromAuthorizationHeader(request.headers.get('authorization'));
-    if (fromBearer) return fromBearer;
+    const authorization = request.headers.get('authorization');
+    // If a bearer token was supplied, its result is authoritative. Falling
+    // back to the browser cookie would let a revoked mobile token keep working
+    // in a browser that still has a session.
+    if (authorization) {
+        return emailFromAuthorizationHeader(authorization);
+    }
 
     const session = await getServerSession(authOptions);
     return session?.user?.email || null;

@@ -36,7 +36,8 @@ const MAX_MILESTONE_TEXT_LENGTH = 500;
 const MAX_MILESTONES = 200;
 const MAX_EVENTS = 5000;
 const MAX_ELAPSED_SECONDS = 10 * 366 * 24 * 3600; // ~10 years
-const MAX_TIMESTAMP_SKEW_MS = 60 * 1000; // tolerate 60s of client clock skew
+const MAX_TIMESTAMP_SKEW_MS = 5 * 60 * 1000; // tolerate a few minutes of client clock skew
+const MAX_AUTO_RESUME_AHEAD_MS = 7 * 24 * 60 * 60 * 1000;
 
 const EVENT_TYPES = new Set(['start', 'pause', 'complete']);
 
@@ -57,8 +58,12 @@ export interface SanitizedItimeEvent {
 }
 
 export interface SanitizedMilestone {
+    id?: string;
     text: string;
-    timestamp: number;
+    completed: boolean;
+    completedAt?: number;
+    createdAt: number;
+    createdAtElapsed: number;
 }
 
 export interface SanitizedItimeTaskInput {
@@ -74,7 +79,7 @@ export interface SanitizedItimeTaskInput {
     milestones?: SanitizedMilestone[];
     events?: SanitizedItimeEvent[];
     targetTime?: number;
-    autoResumeAt?: number;
+    autoResumeAt?: number | null;
     isPublic?: boolean;
 }
 
@@ -104,9 +109,10 @@ export function sanitizeItimeTaskInput(
     if (hasDangerousKeys(body)) {
         return { ok: false, error: 'Invalid task payload' };
     }
-    if ('userId' in body) {
-        return { ok: false, error: 'userId cannot be set by the client' };
-    }
+    // `userId` is deliberately ignored rather than rejected. The route always
+    // scopes writes to the authenticated email, and older web clients send the
+    // whole GET response back (which includes userId). Rejecting it made every
+    // pause/resume/complete request fail with a 400.
 
     const now = Date.now();
     const value: SanitizedItimeTaskInput = {};
@@ -131,11 +137,10 @@ export function sanitizeItimeTaskInput(
         value.description = body.description;
     }
 
-    const timestampFields: Array<'startTime' | 'completedAt' | 'cancelledAt' | 'autoResumeAt'> = [
+    const timestampFields: Array<'startTime' | 'completedAt' | 'cancelledAt'> = [
         'startTime',
         'completedAt',
         'cancelledAt',
-        'autoResumeAt',
     ];
     for (const field of timestampFields) {
         if (field in body && body[field] !== undefined) {
@@ -144,6 +149,22 @@ export function sanitizeItimeTaskInput(
                 return { ok: false, error: `${field} must be a valid timestamp` };
             }
             value[field] = raw;
+        }
+    }
+
+    if ('autoResumeAt' in body && body.autoResumeAt !== undefined) {
+        const raw = body.autoResumeAt;
+        // `null` explicitly clears a scheduled break. Future timestamps are
+        // expected here (5m/15m/30m/1h breaks), so they need their own bound.
+        if (raw === null) {
+            value.autoResumeAt = null;
+        } else if (
+            !isFiniteNonNegativeNumber(raw) ||
+            raw > now + MAX_AUTO_RESUME_AHEAD_MS
+        ) {
+            return { ok: false, error: 'autoResumeAt must be a timestamp within the next 7 days' };
+        } else {
+            value.autoResumeAt = raw;
         }
     }
 
@@ -223,11 +244,36 @@ export function sanitizeItimeTaskInput(
             if (milestone.text.length > MAX_MILESTONE_TEXT_LENGTH) {
                 return { ok: false, error: `Milestone text must be at most ${MAX_MILESTONE_TEXT_LENGTH} characters` };
             }
-            const timestamp = milestone.timestamp ?? milestone.createdAt ?? now;
-            if (!isValidTimestamp(timestamp, now)) {
+
+            const id = typeof milestone.id === 'string'
+                ? milestone.id.trim().slice(0, 100)
+                : undefined;
+            const createdAt = milestone.createdAt ?? milestone.timestamp ?? now;
+            if (!isValidTimestamp(createdAt, now)) {
                 return { ok: false, error: 'Invalid milestone timestamp' };
             }
-            milestones.push({ text: milestone.text.trim(), timestamp });
+
+            const createdAtElapsed = isFiniteNonNegativeNumber(milestone.createdAtElapsed)
+                ? milestone.createdAtElapsed
+                : 0;
+            const completed = milestone.completed === true;
+
+            let completedAt: number | undefined;
+            if (milestone.completedAt !== undefined && milestone.completedAt !== null) {
+                if (!isValidTimestamp(milestone.completedAt, now)) {
+                    return { ok: false, error: 'Invalid milestone completion timestamp' };
+                }
+                completedAt = milestone.completedAt;
+            }
+
+            milestones.push({
+                ...(id ? { id } : {}),
+                text: milestone.text.trim(),
+                completed,
+                ...(completedAt !== undefined ? { completedAt } : {}),
+                createdAt,
+                createdAtElapsed,
+            });
         }
         value.milestones = milestones;
     }

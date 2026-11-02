@@ -37,6 +37,12 @@ export interface IUser {
         points: number;
     }>;
     githubSyncLockUntil?: Date;
+    /** Random id of the sync that owns githubSyncLockUntil. */
+    githubSyncLockId?: string;
+    /** Last user-actionable sync error (e.g. token revoked, rate limited). */
+    githubSyncError?: string | null;
+    /** Back off automatic retries until this time. */
+    githubSyncRetryAt?: Date | null;
     showGithubContributions?: boolean;
     isAdmin?: boolean;
     createdAt?: Date;
@@ -138,6 +144,17 @@ const UserSchema = new mongoose.Schema<IUser>({
     }],
     githubSyncLockUntil: {
         type: Date,
+    },
+    githubSyncLockId: {
+        type: String,
+    },
+    githubSyncError: {
+        type: String,
+        default: null,
+    },
+    githubSyncRetryAt: {
+        type: Date,
+        default: null,
     },
     showGithubContributions: {
         type: Boolean,

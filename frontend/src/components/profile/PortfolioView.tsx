@@ -34,7 +34,7 @@ function LinkIcon({ className }: { className?: string }) {
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
-    return <p className="folio-mono mb-5 text-xs tracking-widest folio-accent-text">// {children}</p>;
+    return <p className="folio-mono mb-5 text-xs tracking-widest folio-accent-text">{'// '}{children}</p>;
 }
 
 function ProjectCard({ project, index }: { project: ProfileProject; index: number }) {
@@ -326,6 +326,9 @@ export function PortfolioView({
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState('');
     const savingRef = useRef(false);
+    // Snapshot that failed to save. Prevents the 2s auto-save effect from
+    // retrying the exact same payload forever after a 401/500.
+    const failedSnapshotRef = useRef<string | null>(null);
 
     useEffect(() => {
         if (!editMode || dirty) return;
@@ -423,6 +426,7 @@ export function PortfolioView({
 
         const sanitized = sanitizeProjects(projects);
 
+        const saveSnapshot = JSON.stringify({ headline, bio, projects, showGithubContributions });
         savingRef.current = true;
         setSaving(true);
         setMessage('');
@@ -438,10 +442,12 @@ export function PortfolioView({
             setHeadline(data.profile?.headline || headline);
             setBio(data.profile?.bio || bio);
             setProjects(data.profile?.projects || sanitized);
+            failedSnapshotRef.current = null;
             setDirty(false);
             setMessage('Saved');
             setTimeout(() => setMessage(''), 2500);
         } catch (err: unknown) {
+            failedSnapshotRef.current = saveSnapshot;
             setMessage(err instanceof Error ? err.message : 'Save failed');
         } finally {
             savingRef.current = false;
@@ -451,6 +457,12 @@ export function PortfolioView({
 
     useEffect(() => {
         if (!editMode || !dirty || saving) return;
+
+        // Do not hammer the API with the same failing payload. A new edit
+        // changes the snapshot and re-arms auto-save.
+        const currentSnapshot = JSON.stringify({ headline, bio, projects, showGithubContributions });
+        if (failedSnapshotRef.current === currentSnapshot) return;
+
         const timer = setTimeout(() => {
             void handleSave();
         }, 2000);

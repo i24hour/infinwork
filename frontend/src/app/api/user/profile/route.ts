@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
+import { getAuthorizedEmail } from '@/lib/mobile-auth';
 import Chain from '@/models/IChain';
 import User from '@/models/User';
 import { ensureUserHasDefaultUsername } from '@/lib/username';
@@ -9,8 +8,8 @@ import { normalizeImageDataUrl } from '@/lib/validate';
 
 export async function POST(request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
-        if (!session?.user?.email) {
+        const email = await getAuthorizedEmail(request);
+        if (!email) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
@@ -27,7 +26,7 @@ export async function POST(request: NextRequest) {
 
         await connectDB();
 
-        const userEmail = session.user.email;
+        const userEmail = email;
 
         await ensureUserHasDefaultUsername(userEmail);
 

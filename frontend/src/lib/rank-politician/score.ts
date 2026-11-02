@@ -220,16 +220,11 @@ export function aggregatePoliticianStats(posts: AggregateStatsInput[]): Politici
         }
     }
 
-    const classifiedForPct =
-        stats.onPortfolioCount +
-        stats.relatedCount +
-        stats.offTopicCount +
-        stats.attackCount +
-        stats.personalCount;
-
+    // Use every post as the denominator, including `unknown`. Excluding
+    // unknowns let a handful of classified posts hide a page full of noise.
     stats.onPortfolioPct =
-        classifiedForPct > 0
-            ? Math.round((stats.onPortfolioCount / classifiedForPct) * 1000) / 10
+        stats.postCount > 0
+            ? Math.round((stats.onPortfolioCount / stats.postCount) * 1000) / 10
             : 0;
 
     stats.netScore = Math.round(stats.netScore * 100) / 100;

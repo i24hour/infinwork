@@ -2,14 +2,14 @@
 
 import { Sidebar } from '@/components/Sidebar';
 import { SignInModal } from '@/components/SignInModal';
-import { useSession, signIn, signOut } from 'next-auth/react';
-import Image from 'next/image';
+import { useSession, signOut } from 'next-auth/react';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } from '@/lib/score';
 import { PerformanceChart } from '@/components/PerformanceChart';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { LiveTimer, LiveTotalTimer, LivePauseCountdown } from '@/components/LiveTimer';
+import { LiveTimer, LivePauseCountdown } from '@/components/LiveTimer';
 import {
+    clearAllCache,
     fetchWithCache,
     getCachedData,
     getInitialIsLightTheme,
@@ -28,6 +28,7 @@ interface ITimeTask {
     completed: boolean;
     completedAt?: number; // timestamp when completed
     cancelledAt?: number;
+    cancelReason?: string;
     targetTime?: number; // target time in seconds
     autoResumeAt?: number; // scheduled automatic resume timestamp
     isPublic?: boolean;
@@ -51,6 +52,86 @@ interface Milestone {
     createdAtElapsed: number; // elapsed seconds when milestone was added
 }
 
+/** Normalise a task from the API (Mongo `_id`, lean docs, legacy milestones). */
+function normalizeTask(raw: Record<string, unknown>): ITimeTask {
+    const rawMilestones = Array.isArray(raw.milestones) ? raw.milestones : [];
+    const milestones: Milestone[] = rawMilestones.map((entry, index) => {
+        const milestone = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
+        const createdAt = Number(milestone.createdAt ?? milestone.timestamp ?? Date.now());
+        return {
+            id: String(milestone.id ?? milestone._id ?? `${createdAt}-${index}`),
+            text: String(milestone.text ?? ''),
+            completed: milestone.completed === true,
+            completedAt: typeof milestone.completedAt === 'number' ? milestone.completedAt : undefined,
+            createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+            createdAtElapsed: Number.isFinite(Number(milestone.createdAtElapsed))
+                ? Number(milestone.createdAtElapsed)
+                : 0,
+        };
+    });
+
+    return {
+        ...(raw as unknown as ITimeTask),
+        id: String(raw._id ?? raw.id ?? ''),
+        title: String(raw.title ?? ''),
+        description: String(raw.description ?? ''),
+        pausedElapsed: Number(raw.pausedElapsed ?? 0),
+        milestones,
+        events: Array.isArray(raw.events)
+            ? (raw.events as ITimeTask['events'])
+            : undefined,
+    };
+}
+
+/**
+ * Build a whitelisted PUT body. Sending the whole GET object leaked `userId`,
+ * `createdAt` and `updatedAt` back to the API; `userId` made every write fail
+ * validation, so timer state never persisted.
+ */
+function buildTaskPayload(task: ITimeTask): Record<string, unknown> {
+    const payload: Record<string, unknown> = {
+        ...(task._id ? { _id: task._id } : {}),
+        title: task.title,
+        description: task.description ?? '',
+        startTime: task.startTime,
+        pausedElapsed: task.pausedElapsed ?? 0,
+        enabled: task.enabled,
+        completed: task.completed,
+        isPublic: task.isPublic !== false,
+        events: task.events ?? [],
+        milestones: (task.milestones ?? []).map((milestone) => ({
+            id: milestone.id,
+            text: milestone.text,
+            completed: milestone.completed,
+            ...(typeof milestone.completedAt === 'number' ? { completedAt: milestone.completedAt } : {}),
+            createdAt: milestone.createdAt,
+            createdAtElapsed: milestone.createdAtElapsed,
+        })),
+        autoResumeAt: typeof task.autoResumeAt === 'number' ? task.autoResumeAt : null,
+    };
+
+    if (typeof task.completedAt === 'number') payload.completedAt = task.completedAt;
+    if (typeof task.cancelledAt === 'number') payload.cancelledAt = task.cancelledAt;
+    if (typeof task.targetTime === 'number') payload.targetTime = task.targetTime;
+    if (typeof task.cancelReason === 'string') payload.cancelReason = task.cancelReason;
+
+    return payload;
+}
+
+function readGuestTasks(): ITimeTask[] {
+    if (typeof window === 'undefined') return [];
+    try {
+        const saved = localStorage.getItem('itime_tasks');
+        if (!saved) return [];
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed)
+            ? parsed.map((task) => normalizeTask(task as Record<string, unknown>))
+            : [];
+    } catch {
+        return [];
+    }
+}
+
 export default function ITimePage() {
     const { data: session, status } = useSession();
     const initialTasksCache = getCachedData<{ tasks?: Array<Omit<ITimeTask, 'id'> & { id?: string }> }>('/api/itime');
@@ -64,10 +145,9 @@ export default function ITimePage() {
     }>('/api/user/settings');
 
     const [tasks, setTasks] = useState<ITimeTask[]>(() =>
-        (initialTasksCache?.tasks ?? []).map((task) => ({
-            ...task,
-            id: task._id ?? task.id ?? '',
-        }))
+        (initialTasksCache?.tasks ?? []).map((task) =>
+            normalizeTask(task as unknown as Record<string, unknown>)
+        )
     );
     const [hasLoadedTasksOnce, setHasLoadedTasksOnce] = useState<boolean>(() => Boolean(initialTasksCache?.tasks));
     const [hasLoadedProfileOnce, setHasLoadedProfileOnce] = useState<boolean>(() => Boolean(initialSettingsCache));
@@ -82,6 +162,7 @@ export default function ITimePage() {
     const [completedTasksPage, setCompletedTasksPage] = useState(1);
     const [scoreNow, setScoreNow] = useState<number>(() => Date.now());
     const [isLightTheme, setIsLightTheme] = useState<boolean>(() => getInitialIsLightTheme());
+    const [saveError, setSaveError] = useState<string | null>(null);
 
     useEffect(() => {
         const root = document.documentElement;
@@ -126,10 +207,10 @@ export default function ITimePage() {
                 const data = await fetchWithCache<{
                     tasks?: Array<Omit<ITimeTask, 'id'> & { id?: string }>;
                 }>('/api/itime', { dedupingIntervalMs: 2000 });
-                setTasks((data.tasks ?? []).map((task) => ({
-                    ...task,
-                    id: task._id ?? task.id ?? '',
-                })));
+                setTasks((data.tasks ?? []).map((task) =>
+                    normalizeTask(task as unknown as Record<string, unknown>)
+                ));
+                setSaveError(null);
                 setHasLoadedTasksOnce(true);
                 return;
             } catch (error) {
@@ -143,14 +224,43 @@ export default function ITimePage() {
         }
 
         // Load from localStorage for guest users
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('itime_tasks');
-            setTasks(saved ? JSON.parse(saved) : []);
-        }
+        setTasks(readGuestTasks());
         setHasLoadedTasksOnce(true);
     }, [status]);
 
+    const persistTask = useCallback(async (task: ITimeTask): Promise<boolean> => {
+        if (status !== 'authenticated' || !task._id) return true;
+
+        try {
+            const response = await fetch('/api/itime', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(buildTaskPayload(task)),
+            });
+
+            if (!response.ok) {
+                const payload = await response.json().catch(() => ({}));
+                throw new Error(
+                    typeof payload?.error === 'string'
+                        ? payload.error
+                        : `Could not save task (${response.status})`
+                );
+            }
+
+            setSaveError(null);
+            return true;
+        } catch (error) {
+            console.error('Error saving task:', error);
+            setSaveError(error instanceof Error ? error.message : 'Could not save task');
+            // Re-sync so the UI never keeps an optimistic state the server rejected.
+            invalidateCache('/api/itime');
+            fetchTasks();
+            return false;
+        }
+    }, [fetchTasks, status]);
+
     const pauseMenuRef = useRef<HTMLDivElement>(null);
+    const resumingTaskIdsRef = useRef<Set<string>>(new Set());
 
     const [userProfile, setUserProfile] = useState<{ username?: string; image?: string }>(() =>
         initialSettingsCache?.username ? { username: initialSettingsCache.username } : {}
@@ -238,6 +348,28 @@ export default function ITimePage() {
         };
     }, [fetchUserProfile, session?.user?.email, status]);
 
+    // Keep the task list in sync with server-side auto-cancel and other devices.
+    useEffect(() => {
+        if (status !== 'authenticated') return;
+
+        const interval = setInterval(() => {
+            fetchTasks();
+        }, 30000);
+
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                fetchTasks();
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        return () => {
+            clearInterval(interval);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, [fetchTasks, status]);
+
     // Click outside to close pause menu
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -279,124 +411,129 @@ export default function ITimePage() {
     }, [tasks, status, hasLoadedTasksOnce]);
 
     const handleAddTask = async () => {
-        if (!newTitle.trim()) return;
+        if (!newTitle.trim() || status === 'loading') return;
 
-        // DEBUG: Log authentication status
-        console.log('🔐 Auth Status:', { status, session });
-
-        // Check if user is authenticated (block if loading or unauthenticated)
-        if (status === 'loading') {
-            console.log('⏳ Session loading, please wait...');
-            return;
-        }
-
-        if (status === 'unauthenticated') {
-            console.log('❌ Not authenticated - showing sign in modal');
-            setShowSignInModal(true);
-            return;
-        }
-
-        console.log('✅ Authenticated - adding task');
+        const now = Date.now();
         const newTask: ITimeTask = {
-            id: Date.now().toString(),
-            title: newTitle,
+            id: `guest-${now}`,
+            title: newTitle.trim(),
             description: newDescription,
-            startTime: Date.now(),
+            startTime: now,
             pausedElapsed: 0,
             enabled: true,
             completed: false,
             isPublic: true,
             milestones: [],
-            events: [{ type: 'start', timestamp: Date.now() }],
+            events: [{ type: 'start', timestamp: now }],
         };
 
+        // Guest mode is explicitly offered by the sign-in modal, so honour it:
+        // tasks are stored in localStorage by the save effect below.
+        if (status === 'unauthenticated') {
+            setTasks((prev) => [newTask, ...prev]);
+            setNewTitle('');
+            setNewDescription('');
+            setSaveError(null);
+            return;
+        }
+
         try {
-            // Save to MongoDB
             const response = await fetch('/api/itime', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(newTask),
+                body: JSON.stringify(buildTaskPayload(newTask)),
             });
 
-            if (response.ok) {
-                const { task } = await response.json();
-                setTasks([...tasks, { ...task, id: task._id }]);
-                setNewTitle('');
-                setNewDescription('');
-            } else {
-                console.error('Failed to save task');
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || !payload?.task) {
+                throw new Error(
+                    typeof payload?.error === 'string'
+                        ? payload.error
+                        : `Could not create task (${response.status})`
+                );
             }
+
+            const created = normalizeTask(payload.task as Record<string, unknown>);
+            setTasks((prev) => [created, ...prev]);
+            setNewTitle('');
+            setNewDescription('');
+            setSaveError(null);
         } catch (error) {
             console.error('Error saving task:', error);
+            setSaveError(error instanceof Error ? error.message : 'Could not create task');
         }
     };
 
     const toggleTask = async (id: string, breakMinutes?: number) => {
         const task = tasks.find(t => t.id === id);
-        if (!task) return;
+        if (!task || task.completed || task.cancelledAt) return;
 
-        const currentElapsed = task.enabled ? getElapsedSeconds(task) : task.pausedElapsed;
         const now = Date.now();
-        const updatedTask = {
+        const isStarting = !task.enabled;
+        const currentElapsed = isStarting
+            ? Math.max(0, task.pausedElapsed || 0)
+            : Math.max(0, getElapsedSeconds(task, now));
+
+        // Legacy tasks have no event stream. Seed a synthetic start so the
+        // accumulated pausedElapsed is not lost when the first event is added.
+        const baseEvents = task.events && task.events.length > 0
+            ? [...task.events]
+            : [{ type: 'start' as const, timestamp: Math.max(0, now - (currentElapsed * 1000)) }];
+
+        const updatedTask: ITimeTask = {
             ...task,
-            enabled: !task.enabled,
+            enabled: isStarting,
             pausedElapsed: currentElapsed,
-            startTime: !task.enabled ? now : 0,
-            autoResumeAt: (!task.enabled) ? undefined : (breakMinutes ? now + (breakMinutes * 60000) : undefined),
-            events: [...(task.events || []), {
-                type: (!task.enabled ? 'start' : 'pause') as 'start' | 'pause' | 'complete',
-                timestamp: now
-            }]
+            startTime: isStarting
+                ? now
+                : (task.startTime || Math.max(0, now - (currentElapsed * 1000))),
+            autoResumeAt: isStarting
+                ? undefined
+                : (breakMinutes ? now + (breakMinutes * 60000) : undefined),
+            events: [
+                ...baseEvents,
+                { type: isStarting ? 'start' : 'pause', timestamp: now },
+            ],
         };
 
         setTasks((prev) => prev.map(t => t.id === id ? updatedTask : t));
-
-        if (status === 'authenticated' && task._id) {
-            try {
-                await fetch('/api/itime', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ _id: task._id, ...updatedTask }),
-                });
-            } catch (error) {
-                console.error('Error updating task:', error);
-            }
-        }
+        await persistTask(updatedTask);
     };
 
     const resumeTaskFromBreak = useCallback(async (id: string) => {
-        playAlertSound();
-        setTasks(prev => {
-            const task = prev.find(t => t.id === id);
-            if (!task || task.enabled) return prev;
+        if (resumingTaskIdsRef.current.has(id)) return;
+        const task = tasks.find(t => t.id === id);
+        if (!task || task.enabled || task.completed || task.cancelledAt) return;
 
+        resumingTaskIdsRef.current.add(id);
+        try {
+            playAlertSound();
             const now = Date.now();
-            const updatedTask = {
+            const currentElapsed = Math.max(0, task.pausedElapsed || 0);
+            const baseEvents = task.events && task.events.length > 0
+                ? [...task.events]
+                : [{ type: 'start' as const, timestamp: Math.max(0, now - (currentElapsed * 1000)) }];
+
+            const updatedTask: ITimeTask = {
                 ...task,
                 enabled: true,
                 autoResumeAt: undefined,
                 startTime: now,
-                events: [...(task.events || []), {
-                    type: 'start' as const,
-                    timestamp: now
-                }]
+                pausedElapsed: currentElapsed,
+                events: [...baseEvents, { type: 'start', timestamp: now }],
             };
 
-            // Fire and forget API call
-            if (status === 'authenticated' && task._id) {
-                fetch('/api/itime', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ _id: task._id, ...updatedTask }),
-                }).catch(e => console.error(e));
-            }
-
-            return prev.map(t => t.id === id ? updatedTask : t);
-        });
-    }, [status]);
+            setTasks(prev => prev.map(t => t.id === id ? updatedTask : t));
+            await persistTask(updatedTask);
+        } finally {
+            resumingTaskIdsRef.current.delete(id);
+        }
+    }, [persistTask, tasks]);
 
     useEffect(() => {
-        const activeBreaks = tasks.filter(t => !t.enabled && t.autoResumeAt);
+        const activeBreaks = tasks.filter(
+            t => !t.enabled && !t.completed && !t.cancelledAt && typeof t.autoResumeAt === 'number'
+        );
         if (activeBreaks.length === 0) return;
 
         const interval = setInterval(() => {
@@ -417,140 +554,147 @@ export default function ITimePage() {
 
         if (status === 'authenticated' && task?._id) {
             try {
-                await fetch(`/api/itime?id=${task._id}`, {
+                const response = await fetch(`/api/itime?id=${task._id}`, {
                     method: 'DELETE',
                 });
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => ({}));
+                    throw new Error(
+                        typeof payload?.error === 'string'
+                            ? payload.error
+                            : `Could not delete task (${response.status})`
+                    );
+                }
+                setSaveError(null);
             } catch (error) {
                 console.error('Error deleting task:', error);
+                setSaveError(error instanceof Error ? error.message : 'Could not delete task');
+                invalidateCache('/api/itime');
+                fetchTasks();
             }
         }
     };
 
     const completeTask = async (id: string) => {
         const task = tasks.find(t => t.id === id);
-        if (!task) return;
+        if (!task || task.completed) return;
 
-        const finalElapsed = getElapsedSeconds(task);
-        const updatedTask = {
+        const now = Date.now();
+        const finalElapsed = Math.max(0, getElapsedSeconds(task, now));
+        const baseEvents = task.events && task.events.length > 0
+            ? [...task.events]
+            : [{ type: 'start' as const, timestamp: Math.max(0, now - (finalElapsed * 1000)) }];
+
+        const updatedTask: ITimeTask = {
             ...task,
             completed: true,
-            completedAt: Date.now(),
+            completedAt: now,
             enabled: false,
             pausedElapsed: finalElapsed,
-            startTime: 0,
-            events: [...(task.events || []), { type: 'complete', timestamp: Date.now() } as const]
+            startTime: task.startTime || Math.max(0, now - (finalElapsed * 1000)),
+            autoResumeAt: undefined,
+            events: [...baseEvents, { type: 'complete', timestamp: now }],
         };
 
         setTasks((prev) => prev.map(t => t.id === id ? updatedTask : t));
-
-        if (status === 'authenticated' && task._id) {
-            try {
-                await fetch('/api/itime', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ _id: task._id, ...updatedTask }),
-                });
-            } catch (error) {
-                console.error('Error completing task:', error);
-            }
-        }
+        await persistTask(updatedTask);
     };
 
-    const addMilestone = (taskId: string) => {
-        if (!newMilestone.trim()) return;
+    const addMilestone = async (taskId: string) => {
+        const text = newMilestone.trim();
+        if (!text) return;
         const task = tasks.find(t => t.id === taskId);
         if (!task) return;
 
-        setTasks((prev) =>
-            prev.map((task) => {
-                if (task.id !== taskId) return task;
-                const milestone: Milestone = {
-                    id: Date.now().toString(),
-                    text: newMilestone,
-                    completed: false,
-                    createdAt: Date.now(),
-                    createdAtElapsed: getElapsedSeconds(task),
-                };
-                return {
-                    ...task,
-                    milestones: [...(task.milestones || []), milestone],
-                };
-            })
-        );
+        const now = Date.now();
+        const milestone: Milestone = {
+            id: `${now}-${Math.random().toString(36).slice(2, 8)}`,
+            text,
+            completed: false,
+            createdAt: now,
+            createdAtElapsed: Math.max(0, getElapsedSeconds(task, now)),
+        };
+
         setNewMilestone('');
+        const updatedTask: ITimeTask = {
+            ...task,
+            milestones: [...(task.milestones || []), milestone],
+        };
+        setTasks((prev) => prev.map(t => t.id === taskId ? updatedTask : t));
+        await persistTask(updatedTask);
     };
 
-    const toggleMilestone = (taskId: string, milestoneId: string) => {
-        setTasks((prev) =>
-            prev.map((task) => {
-                if (task.id !== taskId) return task;
-                return {
-                    ...task,
-                    milestones: task.milestones?.map((m) =>
-                        m.id === milestoneId
-                            ? { ...m, completed: !m.completed, completedAt: !m.completed ? Date.now() : undefined }
-                            : m
-                    ),
-                };
-            })
-        );
+    const toggleMilestone = async (taskId: string, milestoneId: string) => {
+        const task = tasks.find(t => t.id === taskId);
+        if (!task) return;
+
+        const now = Date.now();
+        const updatedTask: ITimeTask = {
+            ...task,
+            milestones: (task.milestones || []).map((milestone) =>
+                milestone.id === milestoneId
+                    ? {
+                        ...milestone,
+                        completed: !milestone.completed,
+                        completedAt: !milestone.completed ? now : undefined,
+                    }
+                    : milestone
+            ),
+        };
+
+        setTasks((prev) => prev.map(t => t.id === taskId ? updatedTask : t));
+        await persistTask(updatedTask);
     };
 
-    const deleteMilestone = (taskId: string, milestoneId: string) => {
-        setTasks((prev) =>
-            prev.map((task) => {
-                if (task.id !== taskId) return task;
-                return {
-                    ...task,
-                    milestones: task.milestones?.filter((m) => m.id !== milestoneId),
-                };
-            })
-        );
+    const deleteMilestone = async (taskId: string, milestoneId: string) => {
+        const task = tasks.find(t => t.id === taskId);
+        if (!task) return;
+
+        const updatedTask: ITimeTask = {
+            ...task,
+            milestones: (task.milestones || []).filter((milestone) => milestone.id !== milestoneId),
+        };
+
+        setTasks((prev) => prev.map(t => t.id === taskId ? updatedTask : t));
+        await persistTask(updatedTask);
     };
 
     const toggleTaskPrivacy = async (id: string) => {
         const task = tasks.find(t => t.id === id);
         if (!task) return;
 
-        const updatedTask = {
+        // Legacy tasks have `isPublic === undefined`; the UI already treats
+        // that as public, so the first click must explicitly make it private.
+        const updatedTask: ITimeTask = {
             ...task,
-            isPublic: !task.isPublic,
+            isPublic: task.isPublic === false ? true : false,
         };
 
         setTasks((prev) => prev.map(t => t.id === id ? updatedTask : t));
-
-        if (status === 'authenticated' && task._id) {
-            try {
-                await fetch('/api/itime', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ _id: task._id, isPublic: updatedTask.isPublic }),
-                });
-            } catch (error) {
-                console.error('Error updating task privacy:', error);
-            }
-        }
+        await persistTask(updatedTask);
     };
 
-    const setTargetTime = (taskId: string) => {
+    const setTargetTime = async (taskId: string) => {
         const hours = parseInt(targetHours) || 0;
         const minutes = parseInt(targetMinutes) || 0;
         const totalSeconds = (hours * 3600) + (minutes * 60);
 
         if (totalSeconds <= 0) return;
 
-        setTasks((prev) =>
-            prev.map((task) =>
-                task.id === taskId ? { ...task, targetTime: totalSeconds } : task
-            )
-        );
+        const task = tasks.find(t => t.id === taskId);
+        if (!task) return;
+
+        const updatedTask: ITimeTask = { ...task, targetTime: totalSeconds };
+        setTasks((prev) => prev.map(t => t.id === taskId ? updatedTask : t));
         setTargetHours('');
         setTargetMinutes('');
+        await persistTask(updatedTask);
     };
 
     const getElapsedSeconds = useCallback((task: ITimeTask, now: number = Date.now()): number => {
         // If task is completed and has legacy `completedAt`, use total duration if no events
         if (task.completed && task.completedAt && (!task.events || task.events.length === 0)) {
+            if (!task.startTime) return Math.max(0, task.pausedElapsed || 0);
             const completedTime = (task.completedAt - task.startTime) / 1000;
             return Math.floor(completedTime > 0 ? completedTime : task.pausedElapsed);
         }
@@ -569,6 +713,8 @@ export default function ITimePage() {
         let lastStartTime = 0;
 
         for (const ev of task.events) {
+            if (ev.timestamp > now) break;
+
             if (ev.type === 'start') {
                 if (!isRunning) {
                     isRunning = true;
@@ -602,7 +748,6 @@ export default function ITimePage() {
 
     const tasksReady = hasLoadedTasksOnce;
     const scoreReady = tasksReady && (status === 'unauthenticated' || hasLoadedProfileOnce);
-    const totalTime = useMemo(() => tasks.reduce((sum, task) => sum + getElapsedSeconds(task), 0), [tasks, getElapsedSeconds]);
     const liveScore = useMemo<number | null>(
         () => scoreReady
             ? getScoreAtTime(tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory)
@@ -615,6 +760,12 @@ export default function ITimePage() {
         () => tasks
             .filter((task) => !task.completed && !task.cancelledAt)
             .sort((a, b) => Number(b.enabled) - Number(a.enabled)),
+        [tasks]
+    );
+    const cancelledTasks = useMemo(
+        () => tasks
+            .filter((task) => Boolean(task.cancelledAt) && !task.completed)
+            .sort((a, b) => (b.cancelledAt || 0) - (a.cancelledAt || 0)),
         [tasks]
     );
 
@@ -701,7 +852,7 @@ export default function ITimePage() {
                                         />
                                     )}
                                     <LiquidButton
-                                        onClick={() => signOut()}
+                                        onClick={() => { clearAllCache(); signOut(); }}
                                         className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors"
                                         variant="ghost"
                                     >
@@ -725,7 +876,9 @@ export default function ITimePage() {
                     <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
                         <div className={`text-sm mb-2 ${isLightTheme ? 'text-zinc-700' : 'text-gray-400'}`}>Total Tasks</div>
                         <div className={`text-2xl md:text-4xl font-bold ${isLightTheme ? 'text-zinc-900' : 'text-white'}`}>
-                            {tasksReady ? tasks.length : <span className={`inline-block h-8 md:h-10 w-14 animate-pulse rounded ${isLightTheme ? 'bg-black/10' : 'bg-white/10'}`} />}
+                            {tasksReady
+                                ? tasks.filter((task) => !task.cancelledAt).length
+                                : <span className={`inline-block h-8 md:h-10 w-14 animate-pulse rounded ${isLightTheme ? 'bg-black/10' : 'bg-white/10'}`} />}
                         </div>
                     </div>
 
@@ -770,6 +923,26 @@ export default function ITimePage() {
                         </div>
                     )}
                 </div>
+
+                {saveError && (
+                    <div className="mb-6 flex items-start justify-between gap-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                        <span>{saveError}</span>
+                        <button
+                            type="button"
+                            onClick={() => setSaveError(null)}
+                            className="shrink-0 text-red-400 hover:text-red-200"
+                            aria-label="Dismiss error"
+                        >
+                            Dismiss
+                        </button>
+                    </div>
+                )}
+
+                {status === 'unauthenticated' && (
+                    <div className="mb-6 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                        Guest mode: tasks are stored in this browser only. Sign in to sync them across devices.
+                    </div>
+                )}
 
                 {/* Add Task Form */}
                 <div className="bg-black  rounded-2xl border border-white/10 p-6 mb-8">
@@ -952,6 +1125,39 @@ export default function ITimePage() {
                         </div>
                     )}
                 </div>
+
+                {/* Cancelled Tasks (100h runtime safety cap) */}
+                {cancelledTasks.length > 0 && (
+                    <div className="bg-black rounded-2xl border border-red-500/20 p-6 mb-8">
+                        <h2 className="text-lg font-semibold text-white mb-4">Cancelled Tasks</h2>
+                        <p className="mb-4 text-sm text-zinc-500">
+                            These tasks crossed the 100-hour runtime limit. They are excluded from your score; delete them when you no longer need the record.
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {cancelledTasks.map((task) => (
+                                <div key={task.id} className="flex items-start justify-between gap-3 rounded-lg border border-white/10 bg-white/5 p-4">
+                                    <div className="min-w-0">
+                                        <div className="truncate text-sm font-semibold text-white">{task.title}</div>
+                                        <div className="mt-1 text-xs text-red-400">
+                                            Auto-cancelled after 100h
+                                        </div>
+                                    </div>
+                                    <LiquidButton
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => deleteTask(task.id)}
+                                        className="shrink-0 text-zinc-500 hover:text-white"
+                                        title="Delete cancelled task"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                    </LiquidButton>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {/* Completed Tasks */}
                 {completedTasks.length > 0 && (

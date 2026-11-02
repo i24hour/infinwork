@@ -76,7 +76,7 @@ export function ChainNode({ member, isCurrentUser, onImageClick, onNodeClick, on
                         <span
                             className={`text-2xl font-bold uppercase transition-opacity ${isLightTheme ? 'text-zinc-900' : 'text-white'} ${isCurrentUser ? 'group-hover:opacity-0' : ''}`}
                         >
-                            {member.name[0]}
+                            {member.name?.[0] || '?'}
                         </span>
                     )}
                     {isCurrentUser && (
@@ -96,9 +96,9 @@ export function ChainNode({ member, isCurrentUser, onImageClick, onNodeClick, on
                     <h4 className="text-white font-medium text-sm truncate">{member.name}</h4>
                     <p className="text-[10px] text-zinc-500 mt-0.5">{formatTime(member.contributionTime)}</p>
                     
-                    {isCurrentUser && (
+                    {isCurrentUser && onAddMember && (
                         <button
-                            onClick={() => onAddMember?.(member.userId)}
+                            onClick={() => onAddMember(member.userId)}
                             className={`mt-2 w-8 h-8 rounded-full border flex items-center justify-center transition-all ${isLightTheme
                                 ? 'bg-white border-black/15 text-zinc-700 hover:text-black hover:bg-zinc-100 shadow-sm'
                                 : 'bg-white/5 border-white/15 text-white/60 hover:text-white hover:bg-white/10'

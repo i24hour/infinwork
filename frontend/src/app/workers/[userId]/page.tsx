@@ -7,7 +7,6 @@ import { LiveTimer } from '@/components/LiveTimer';
 import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } from '@/lib/score';
 import { PerformanceChart } from '@/components/PerformanceChart';
 import { useRouter } from 'next/navigation';
-import { useSession } from 'next-auth/react';
 import { fetchWithCache, getCachedData } from '@/lib/client-cache';
 
 // Use same types as ITimeTracker
@@ -37,12 +36,40 @@ interface Milestone {
     createdAtElapsed: number;
 }
 
+function normalizeWorkerTask(raw: Record<string, unknown>): ITimeTask {
+    const rawMilestones = Array.isArray(raw.milestones) ? raw.milestones : [];
+    const milestones: Milestone[] = rawMilestones.map((entry, index) => {
+        const milestone = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
+        const createdAt = Number(milestone.createdAt ?? milestone.timestamp ?? Date.now());
+        return {
+            id: String(milestone.id ?? milestone._id ?? `${createdAt}-${index}`),
+            text: String(milestone.text ?? ''),
+            completed: milestone.completed === true,
+            completedAt: typeof milestone.completedAt === 'number' ? milestone.completedAt : undefined,
+            createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+            createdAtElapsed: Number.isFinite(Number(milestone.createdAtElapsed))
+                ? Number(milestone.createdAtElapsed)
+                : 0,
+        };
+    });
+
+    return {
+        ...(raw as unknown as ITimeTask),
+        id: String(raw._id ?? raw.id ?? ''),
+        title: String(raw.title ?? ''),
+        description: String(raw.description ?? ''),
+        pausedElapsed: Number(raw.pausedElapsed ?? 0),
+        milestones,
+        events: Array.isArray(raw.events) ? (raw.events as ITimeTask['events']) : undefined,
+    };
+}
+
 export default function WorkerTasksPage({ params }: { params: Promise<{ userId: string }> }) {
     // We need to unwrap params in Next.js 15+ using React.use
     const resolvedParams = use(params);
-    const userId = decodeURIComponent(resolvedParams.userId || '');
+    // Next already decodes route params.
+    const userId = (resolvedParams.userId || '').trim();
 
-    const { data: session } = useSession();
     const router = useRouter();
     const cacheKey = `/api/workers/${encodeURIComponent(userId)}/tasks`;
     const initialCached = getCachedData<{
@@ -50,6 +77,7 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
         user?: {
             username: string;
             image: string | null;
+            isOwner?: boolean;
             points?: number;
             githubPointsLastUpdatedAt?: string | null;
             githubPointsHistory?: GithubPointsSnapshot[] | null;
@@ -59,14 +87,14 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
     }>(cacheKey);
 
     const [tasks, setTasks] = useState<ITimeTask[]>(() =>
-        (initialCached?.tasks || []).map((t) => ({
-            ...t,
-            id: t._id || t.id || '',
-        }))
+        (initialCached?.tasks || []).map((task) =>
+            normalizeWorkerTask(task as unknown as Record<string, unknown>)
+        )
     );
     const [userData, setUserData] = useState<{
         username: string;
         image: string | null;
+        isOwner?: boolean;
         points?: number;
         githubPointsLastUpdatedAt?: string | null;
         githubPointsHistory?: GithubPointsSnapshot[] | null;
@@ -103,10 +131,10 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
                     chainPointsHistory?: ChainPointsSnapshot[] | null;
                 };
             }>(cacheKey, { dedupingIntervalMs: 3000 });
-            setTasks((data.tasks || []).map((t) => ({
-                ...t,
-                id: t._id || t.id || '',
-            })));
+            setTasks((data.tasks || []).map((task) =>
+                normalizeWorkerTask(task as unknown as Record<string, unknown>)
+            ));
+            setError(null);
             if (data.user) {
                 setUserData(data.user);
                 setGamificationPoints(data.user.points || 0);
@@ -143,11 +171,20 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
     }, []);
 
     useEffect(() => {
-        // If viewing own worker profile, redirect to personal iTime tracker to allow full editing
-        if (session?.user?.email === userId || session?.user?.id === userId) {
+        setSelectedTask((current) => {
+            if (!current) return current;
+            const latest = tasks.find((task) => task.id === current.id);
+            if (!latest || latest.completed || latest.cancelledAt) return null;
+            return latest;
+        });
+    }, [tasks]);
+
+    useEffect(() => {
+        // If viewing own worker profile, redirect to personal iTime tracker to allow full editing.
+        if (userData?.isOwner) {
             router.push('/itime');
         }
-    }, [session, userId, router]);
+    }, [userData?.isOwner, router]);
 
     // Timer interval - update current time every second to show live progress of running tasks
     // Removed: now handled by localized LiveTimer and LiveTotalTimer components.
@@ -155,6 +192,7 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
     const getElapsedSeconds = useCallback((task: ITimeTask, now: number = Date.now()): number => {
         // If task is completed and has legacy `completedAt`, use total duration if no events
         if (task.completed && task.completedAt && (!task.events || task.events.length === 0)) {
+            if (!task.startTime) return Math.max(0, task.pausedElapsed || 0);
             const completedTime = (task.completedAt - task.startTime) / 1000;
             return Math.floor(completedTime > 0 ? completedTime : task.pausedElapsed);
         }
@@ -173,6 +211,8 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
         let lastStartTime = 0;
 
         for (const ev of task.events) {
+            if (ev.timestamp > now) break;
+
             if (ev.type === 'start') {
                 if (!isRunning) {
                     isRunning = true;
@@ -274,7 +314,7 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
                                             {(userData?.username || userId).charAt(0).toUpperCase()}
                                         </div>
                                     )}
-                                    <span>{(userData?.username || userId.split('@')[0])}'s Tasks</span>
+                                    <span>{(userData?.username || 'Anonymous')}&apos;s Tasks</span>
                                 </div>
                                 <span className="bg-black text-xs px-2 py-1 rounded text-zinc-400 font-normal self-center">Read-only View</span>
                             </h1>
@@ -286,7 +326,9 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8 max-w-5xl">
                     <div className="bg-black  rounded-2xl border border-white/10 p-6 flex flex-col justify-center">
                         <div className="text-xs uppercase tracking-wider font-semibold text-gray-500 mb-1">Total Tasks</div>
-                        <div className="text-3xl sm:text-4xl font-bold text-white truncate">{tasks.length}</div>
+                        <div className="text-3xl sm:text-4xl font-bold text-white truncate">
+                            {tasks.filter((task) => !task.cancelledAt).length}
+                        </div>
                     </div>
 
                     <div className="bg-black  rounded-2xl border border-white/10 p-6 flex flex-col justify-center">
@@ -542,7 +584,7 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
                                                             </div>
                                                             <div className="flex items-center gap-3 mt-1">
                                                                 <div className="text-xs text-zinc-500">
-                                                                    Added at {formatElapsed(milestone.createdAtElapsed)}
+                                                                    Added at {formatElapsed(milestone.createdAtElapsed || 0)}
                                                                 </div>
                                                                 {milestone.completed && milestone.completedAt && (
                                                                     <>

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
+import { getAuthorizedEmail } from '@/lib/mobile-auth';
 import User from '@/models/User';
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -10,8 +9,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
-        if (!session?.user?.email) {
+        if (!(await getAuthorizedEmail(request))) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
@@ -26,20 +24,16 @@ export async function GET(request: NextRequest) {
 
         const searchRegex = new RegExp(escapeRegex(query), 'i');
 
-        const users = await User.find({
-            $or: [
-                { username: searchRegex },
-                { email: searchRegex }
-            ]
-        })
-        .select('username email image')
+        // Search by username only. Matching partial emails let any signed-in
+        // user enumerate the entire account list.
+        const users = await User.find({ username: searchRegex })
+        .select('username image')
         .limit(10)
         .lean() as any[];
 
         const formattedUsers = users.map(user => ({
-            email: user.email,
             username: user.username,
-            image: user.image
+            image: user.image,
         }));
 
         return NextResponse.json({ users: formattedUsers });

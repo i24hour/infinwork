@@ -11,7 +11,7 @@ Active workspace modules in this repo:
 
 1. **iTime** (`/itime`) - task timer + performance score engine
 2. **Workers** (`/workers`) - user leaderboard and per-user task analytics
-3. **Rank Politician** (`/rank-politician`) - Indian politician X communication focus rankings (seed + Firecrawl scrape/score pipeline + leaderboard)
+3. **Rank Politician** (`/rank-politician`) - Union Cabinet X communication focus rankings (seed + Jina/Firecrawl scrape/score pipeline + leaderboard)
 4. **iChain** (`/ichain`) - collaborative chain timer with burst mechanics
 5. **Ideas** (`/ideas`) - public/private idea board + replies
 6. **SF Tracker** (`/sf-tracker`) - success/failure target tracking
@@ -72,15 +72,17 @@ Legacy hiring/candidate APIs still exist in code, but the current product focus 
 ### `Politician`, `PoliticianPost` (Rank Politician)
 - Politician: name/slug, party, portfolio, `portfolioTopics[]`, X handle/url, scrape status, cached `stats`
 - PoliticianPost: text, externalId, category, score, scoreReason
-- Seed list: `frontend/src/lib/rank-politician/seed.ts` (~38 Indian leaders)
+- Seed list: `frontend/src/lib/rank-politician/seed.ts` (PM + 30 Cabinet ministers = 31)
 - Score helpers: `frontend/src/lib/rank-politician/score.ts`
-  - Categories: `on_portfolio(+2)`, `related(+1)`, `off_topic(-1)`, `attack(-2)`, `personal(-1)`, `unknown(0)`
-  - Leaderboard default sort: `% on-portfolio`, then net score
+  - Categories: `on_portfolio(+2)`, `related(0)`, `off_topic(-1)`, `attack(-2)`, `personal(-1)`, `unknown(0)`
+  - `onPortfolioPct` denominator includes `unknown` posts
+  - Leaderboard default sort: net score, then % on-portfolio
 - Scrape pipeline: `frontend/src/lib/rank-politician/scrape.ts` + `pipeline.ts`
-  - Firecrawl `POST /v2/scrape` with `markdown` + `links`
-  - Parse `x.com/{handle}/status/{id}` URLs into posts (markdown-block fallback)
-  - Classify + upsert posts, recompute politician `stats`
-  - Batch size default: 10 oldest-`lastScrapedAt` politicians per run
+  - Jina Reader primary (free), Firecrawl fallback (paid, credit-guarded)
+  - **Only** `x.com/{handle}/status/{id}` posts are accepted. Profile chrome and Google News headlines are never scored or displayed.
+  - Classify + upsert posts, recompute politician `stats` from status posts only
+  - Batch size default: 8, 20h success cooldown, 6h error backoff
+  - Re-running Seed updates handles; a changed handle purges posts scraped under the old handle
 
 ---
 
@@ -122,16 +124,18 @@ Implemented in `frontend/src/lib/github-sync.ts`.
 
 ### Constants
 - `COMMIT_REWARD_POINTS = 10`
-- `DEFAULT_GITHUB_SYNC_INTERVAL_MS = 15000` (15s cooldown)
-- `GITHUB_SYNC_LOCK_MS = 30000` (30s lock window)
+- `DEFAULT_GITHUB_SYNC_INTERVAL_MS = 120000` (2-minute cooldown)
+- `GITHUB_SYNC_LOCK_MS = 60000` (60s lock window, owner-checked)
+- `GITHUB_FETCH_TIMEOUT_MS = 20000`
+- Error backoff: 10 minutes; rate-limit backoff: 30 minutes
 
 ### Sync flow
-1. Validate user + GitHub connected.
-2. Respect cooldown unless `force`.
-3. Acquire DB lock (`githubSyncLockUntil`) to avoid race/double increments.
-4. Query GitHub GraphQL contributions (`contributionsCollection`) from `githubConnectedAt` to now.
+1. Validate user + GitHub connected + access token present.
+2. Respect cooldown/backoff unless `force`.
+3. Acquire DB lock (`githubSyncLockUntil` + `githubSyncLockId`) to avoid race/double increments.
+4. Query GitHub GraphQL contributions (`contributionsCollection`) in <=364-day windows (GitHub rejects >1 year).
 5. Compute:
-   - `commitsSinceConnection`
+   - `commitsSinceConnection` (monotonic high-water mark)
    - `newCommits = max(0, commitsSinceConnection - githubCommitsTotal)`
    - `pointsEarned = newCommits * 10`
    - `authoritativeGithubPoints = commitsSinceConnection * 10`
@@ -140,6 +144,14 @@ Implemented in `frontend/src/lib/github-sync.ts`.
    - `githubCommitsTotal = commitsSinceConnection`
    - `lastGithubSyncAt = now`
    - `githubPointsHistory[]` rebuilt from contribution days
+   - `githubSyncError = null`, `githubSyncRetryAt = null`
+7. On 401/403, missing token, unknown user, or rate limit: persist `githubSyncError`/`githubSyncRetryAt`, return an actionable error instead of 500, and never wipe existing points.
+
+### Account linking
+- `POST /api/user/link-github-init` mints a signed 5-minute `gh_link` token plus a `gh_link_attempt` marker cookie.
+- NextAuth's `signIn` callback rejects the round trip if the attempt marker exists but the token is invalid/expired.
+- The `jwt` callback only merges GitHub onto the existing account when the token verifies. It never falls through to a normal GitHub sign-in after a failed link, so the Google session cannot be replaced.
+- If the GitHub identity is already attached to another user, linking is rejected; a normal GitHub sign-in reuses that existing account.
 
 ### Important fix (May 2026)
 `githubPointsHistory` is rebuilt from **GitHub day-wise contributions** (IST day-end anchors) + current `now` snapshot, so daily score reflects the **actual contribution day**, not just sync timestamp.
@@ -165,6 +177,13 @@ Enforced by:
 - `/api/workers`
 - `/api/workers/[userId]/tasks`
 - `/api/cron/ping`
+
+Cancelled tasks are excluded from completion rate / average speed in `score.ts`, and are shown in a dedicated "Cancelled Tasks" section so they can be deleted. Their active intervals still protect the idle penalty for the time they actually ran.
+
+### Task persistence
+- PUT bodies are whitelisted (`buildTaskPayload`); `userId`/`createdAt`/`updatedAt` are never sent back.
+- Pause, resume, complete, milestones, target time and privacy are all persisted.
+- `autoResumeAt` accepts future timestamps and `null` to clear. `/api/itime` (and `/api/cron/ping`) auto-resumes due breaks server-side, so a closed tab no longer leaves a task paused forever.
 
 ---
 
@@ -203,6 +222,8 @@ Core logic: `frontend/src/lib/ichain.ts`, routes in `/api/ichain`.
 ChainRewardPoints = 10 * (1 + 2 + ... + n) = 10 * n * (n + 1) / 2
 ```
 - These points are persisted per user (`User.chainPoints`) and included in total score.
+- Deleting a chain recomputes points for every member, so deleting the evidence cannot preserve farmed points.
+- `Burst` is final: visit-window enforcement runs before any work-state update, and a burst chain can never be restarted.
 
 ### Member invite behavior
 - Add via email or username (case-insensitive exact username match via regex)
@@ -232,8 +253,8 @@ Modes:
 
 ## 9) Polling / Refresh Strategy
 
-- Settings: refresh user data every **15s**
-- iTime: refresh profile/GitHub data every **15s**
+- Settings: refresh user data every **15s** (GitHub API sync itself is cooldown-limited to **2 min**)
+- iTime: refresh profile/GitHub data every **15s**; task list every **30s** and on tab focus
 - Workers list: refresh every **15s**
 - iChain list/detail: refresh every **5s** (+ local 1s ticker on detail for smooth timers)
 - Chart live update loop: **1s** for line/candle rendering
@@ -283,19 +304,19 @@ Modes:
 - `GET /api/rank-politician` (leaderboard; query: `party`, `q`, `scrapeStatus`, `sortBy=onPortfolioPct|netScore`; includes `meta` scrape health summary)
 - `GET /api/rank-politician/[slug]` (detail + scored posts)
 - `POST /api/rank-politician/seed` (admin-only upsert of starter politicians)
-- `POST /api/rank-politician/scrape` (admin-only manual Firecrawl batch; body: `{ limit?, slugs? }`)
+- `POST /api/rank-politician/scrape` (admin-only manual batch; body: `{ limit?, slugs?, force? }`; explicit slugs force a re-scrape)
 - `GET /api/cron/rank-politician` (scheduled scrape+score batch; auth via `CRON_SECRET`)
 - UI polish: scrape-status badges, filter chips, category breakdown bars, admin Seed/Scrape buttons
-- Env: `FIRECRAWL_API_KEY`, `CRON_SECRET` (plus existing `MONGODB_URI`)
+- Env: `JINA_API_KEY` (optional), `FIRECRAWL_API_KEY` (optional fallback), `CRON_SECRET` (plus existing `MONGODB_URI`)
 - Vercel cron: daily at 03:00 UTC → `/api/cron/rank-politician` (Hobby plan limit: 1 run/day; may run anytime in that hour)
 - External cron (preferred frequency): GitHub Actions `.github/workflows/rank-politician-cron.yml` every 4 hours
   - Secrets: `CRON_SECRET`, optional `RANK_POLITICIAN_CRON_URL`
   - Setup notes: `.github/RANK_POLITICIAN_CRON.md`
-- Batch: 15 politicians/run, prioritized `never` → `error` → `partial` → `success`, then oldest `lastScrapedAt`
+- Batch: 8 politicians/run, prioritized `never` → `partial` → `error` → `success`, then oldest `lastScrapedAt`
 - Note: hitting the cron URL in a browser returns 401 unless `Authorization: Bearer $CRON_SECRET` is sent (Vercel/GitHub Actions add this automatically)
 
 ### Maintenance
-- `GET /api/cron/ping` (DB wake + runtime auto-cancel sweep)
+- `GET /api/cron/ping` (DB wake + runtime auto-cancel + due-break auto-resume sweep; requires `CRON_SECRET` in production)
 
 ---
 

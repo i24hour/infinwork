@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, use } from 'react';
 import { Sidebar } from '@/components/Sidebar';
-import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
@@ -12,7 +11,9 @@ interface Idea {
     title: string;
     details: string;
     isPublic: boolean;
-    createdBy: string;
+    createdBy?: string;
+    isOwner?: boolean;
+    username?: string;
     createdAt: string;
 }
 
@@ -20,7 +21,8 @@ interface Reply {
     _id: string;
     ideaId: string;
     content: string;
-    createdBy: string;
+    createdBy?: string;
+    isOwner?: boolean;
     username?: string;
     isPublic: boolean;
     imageUrl?: string;
@@ -211,12 +213,12 @@ export default function IdeaDiscussionPage({ params }: { params: Promise<{ ideaI
                                     )}
                                     <div className="relative z-10 flex gap-4">
                                         <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center shrink-0 border border-white/20 shadow-lg text-white font-bold text-lg">
-                                            {selectedIdea.createdBy[0].toUpperCase()}
+                                            {(selectedIdea.username || 'A')[0].toUpperCase()}
                                         </div>
                                         <div className="flex-1 space-y-3">
                                             <div className="flex items-center gap-2 flex-wrap">
                                                 <span className="text-sm font-bold text-white tracking-tight">
-                                                    @{selectedIdea.createdBy.split('@')[0]}
+                                                    @{selectedIdea.username || 'Anonymous'}
                                                 </span>
                                                 <span className="text-[11px] text-zinc-500">
                                                     {new Date(selectedIdea.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
@@ -267,7 +269,7 @@ export default function IdeaDiscussionPage({ params }: { params: Promise<{ ideaI
                                                 <div className="flex items-center justify-between">
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-xs font-semibold text-white">
-                                                            @{reply.username || reply.createdBy.split('@')[0]}
+                                                            @{reply.username || 'Anonymous'}
                                                         </span>
                                                         <span className="text-[11px] text-zinc-600">
                                                             {new Date(reply.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
@@ -287,7 +289,7 @@ export default function IdeaDiscussionPage({ params }: { params: Promise<{ ideaI
                                                         <span className={`text-[10px] font-medium tracking-wider uppercase ${reply.isPublic ? 'text-[#4CAF50]' : 'text-zinc-500'}`}>
                                                             {reply.isPublic ? 'Public' : 'Private'}
                                                         </span>
-                                                        {reply.createdBy === myEmail && (
+                                                        {Boolean(reply.isOwner) && (
                                                             <button
                                                                 type="button"
                                                                 onClick={() => handleToggleReplyVisibility(reply)}
@@ -303,7 +305,7 @@ export default function IdeaDiscussionPage({ params }: { params: Promise<{ ideaI
                                                                 }`} />
                                                             </button>
                                                         )}
-                                                        {reply.createdBy === myEmail && (
+                                                        {Boolean(reply.isOwner) && (
                                                             <>
                                                                 <button
                                                                     onClick={() => { setEditingReplyId(reply._id); setEditingContent(reply.content); }}

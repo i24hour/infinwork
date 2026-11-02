@@ -3,7 +3,7 @@ import connectDB from '@/lib/mongodb';
 import { getAuthorizedEmail } from '@/lib/mobile-auth';
 import ITimeTask from '@/models/ITimeTask';
 import User from '@/models/User';
-import { autoCancelExpiredActiveTasks } from '@/lib/itime-runtime';
+import { autoCancelExpiredActiveTasks, autoResumeDueTasks } from '@/lib/itime-runtime';
 import {
     isPlainObject,
     isValidObjectIdString,
@@ -22,15 +22,19 @@ export async function GET(_request: NextRequest) {
         }
         await connectDB();
 
-        // Auto-register user and check runtime limits in the background so GET /api/itime returns with 1 fast query
+        // Auto-register the user (fire-and-forget) but finish the runtime-limit
+        // sweep before reading, so an expired task is never returned as running.
         User.updateOne(
             { email },
             { $setOnInsert: { email } },
             { upsert: true }
         ).catch((err) => console.error('User upsert failed in /api/itime:', err));
 
-        autoCancelExpiredActiveTasks({ userId: email }).catch((err) =>
+        await autoCancelExpiredActiveTasks({ userId: email }).catch((err) =>
             console.error('autoCancelExpiredActiveTasks failed in /api/itime:', err)
+        );
+        await autoResumeDueTasks({ userId: email }).catch((err) =>
+            console.error('autoResumeDueTasks failed in /api/itime:', err)
         );
         const tasks = await ITimeTask.find({
             userId: email
@@ -113,6 +117,17 @@ export async function PUT(request: NextRequest) {
 
         await connectDB();
         await autoCancelExpiredActiveTasks({ userId: email });
+
+        // Never let a stale client resurrect a task the 100h guard cancelled.
+        const existing = await ITimeTask.findOne({ _id, userId: email })
+            .select('cancelledAt')
+            .lean();
+        if (existing?.cancelledAt) {
+            return NextResponse.json(
+                { error: 'This task was cancelled by the 100-hour runtime limit.' },
+                { status: 409 }
+            );
+        }
 
         const task = await ITimeTask.findOneAndUpdate(
             { _id, userId: email },

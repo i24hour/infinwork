@@ -64,17 +64,21 @@ export default function IChainPage() {
     }, []);
 
     const handleChainCreated = (newChain: any) => {
-        const updatedChains = [newChain, ...chains];
-        // Sort by maxTime (or totalTime for new chain)
-        updatedChains.sort((a, b) => (b.maxTime || b.totalTime || 0) - (a.maxTime || a.totalTime || 0));
-        setChains(updatedChains);
-        setCachedData('/api/ichain', { chains: updatedChains });
+        setChains(prev => {
+            const updatedChains = [newChain, ...prev];
+            // Sort by maxTime (or totalTime for new chain)
+            updatedChains.sort((a, b) => (b.maxTime || b.totalTime || 0) - (a.maxTime || a.totalTime || 0));
+            setCachedData('/api/ichain', { chains: updatedChains });
+            return updatedChains;
+        });
     };
 
     const handleChainDeleted = (chainId: string) => {
-        const next = chains.filter(c => c._id !== chainId);
-        setChains(next);
-        setCachedData('/api/ichain', { chains: next });
+        setChains(prev => {
+            const next = prev.filter(c => c._id !== chainId);
+            setCachedData('/api/ichain', { chains: next });
+            return next;
+        });
     };
 
     return (

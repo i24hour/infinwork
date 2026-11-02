@@ -85,6 +85,43 @@ function applyRuntimeLimitToTask(task: RuntimeTask, now: number): boolean {
     return true;
 }
 
+/**
+ * Resume paused tasks whose scheduled break has ended. This used to run only
+ * in the /itime page while it was open; a user who closed the tab came back
+ * hours later to a task that was still paused. The API now performs the same
+ * transition before returning tasks.
+ */
+export async function autoResumeDueTasks(
+    filter: Record<string, unknown> = {}
+): Promise<number> {
+    const now = Date.now();
+    const dueTasks = await ITimeTask.find({
+        enabled: false,
+        completed: false,
+        cancelledAt: { $exists: false },
+        autoResumeAt: { $ne: null, $lte: now },
+        ...filter,
+    });
+
+    let resumedCount = 0;
+    for (const task of dueTasks as unknown as RuntimeTask[]) {
+        const pausedElapsed = Math.max(0, Number(task.pausedElapsed || 0));
+        const events = Array.isArray(task.events) && task.events.length > 0
+            ? [...task.events]
+            : [{ type: 'start' as const, timestamp: Math.max(0, now - (pausedElapsed * 1000)) }];
+
+        task.events = [...events, { type: 'start', timestamp: now }];
+        task.enabled = true;
+        task.startTime = now;
+        task.pausedElapsed = pausedElapsed;
+        task.autoResumeAt = undefined;
+        await task.save?.();
+        resumedCount++;
+    }
+
+    return resumedCount;
+}
+
 export async function autoCancelExpiredActiveTasks(
     filter: Record<string, unknown> = {}
 ): Promise<number> {

@@ -22,7 +22,17 @@ export async function GET(
             return NextResponse.json({ error: 'Politician not found' }, { status: 404 });
         }
 
-        const posts = await PoliticianPost.find({ politicianId: politician._id })
+        // Only real status posts. Legacy Google News headlines and profile
+        // shell blocks are not authored posts and must not be displayed as if
+        // they were. Filter in the query so the 100-row limit isn't consumed
+        // by unverifiable rows.
+        const posts = await PoliticianPost.find({
+            politicianId: politician._id,
+            postUrl: {
+                $regex: '(?:x\\.com|twitter\\.com)\\/[^/]+\\/status\\/\\d+',
+                $options: 'i',
+            },
+        })
             .sort({ postedAt: -1, createdAt: -1 })
             .limit(100)
             .lean();
@@ -42,11 +52,11 @@ export async function GET(
                 lastScrapedAt: politician.lastScrapedAt || null,
                 lastScrapeStatus: politician.lastScrapeStatus || 'never',
                 lastScrapeError: politician.lastScrapeError || null,
-                stats: politician.stats || {
-                    netScore: 0,
-                    onPortfolioPct: 0,
-                    postCount: 0,
-                    scoredPostCount: 0,
+                stats: {
+                    netScore: Number(politician.stats?.netScore ?? 0),
+                    onPortfolioPct: Number(politician.stats?.onPortfolioPct ?? 0),
+                    postCount: Number(politician.stats?.postCount ?? 0),
+                    scoredPostCount: Number(politician.stats?.scoredPostCount ?? 0),
                 },
             },
             posts: posts.map((post: any) => ({
@@ -65,7 +75,7 @@ export async function GET(
     } catch (error: any) {
         console.error('Error fetching politician detail:', error);
         return NextResponse.json(
-            { error: error?.message || 'Failed to fetch politician' },
+            { error: 'Failed to fetch politician' },
             { status: 500 }
         );
     }

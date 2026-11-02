@@ -24,11 +24,13 @@ const MobileSessionSchema = new mongoose.Schema<IMobileSession>(
         expiresAt: {
             type: Date,
             required: true,
-            index: true,
         },
     },
     { timestamps: true }
 );
+
+// Let MongoDB remove expired bearer tokens instead of growing forever.
+MobileSessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 export default mongoose.models.MobileSession ||
     mongoose.model<IMobileSession>('MobileSession', MobileSessionSchema);

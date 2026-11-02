@@ -1,26 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
+import { getAuthorizedEmail } from '@/lib/mobile-auth';
 import User from '@/models/User';
 import { ensureUserHasDefaultUsername } from '@/lib/username';
 import { sanitizeProjects, isValidHttpUrl, serializeProject, serializePublicProfile } from '@/lib/profile-utils';
+import { isPlainObject, readJsonBody } from '@/lib/validate';
 import type { ProfileUpdatePayload } from '@/types/profile';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
-        if (!session?.user?.email) {
+        const email = await getAuthorizedEmail(request);
+        if (!email) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
         await connectDB();
-        const user = await ensureUserHasDefaultUsername(session.user.email);
-        const profile = serializePublicProfile(user as Parameters<typeof serializePublicProfile>[0]);
+        const user = await ensureUserHasDefaultUsername(email);
+        const profile = serializePublicProfile(
+            user as Parameters<typeof serializePublicProfile>[0],
+            { includeGithubIdentity: true }
+        );
 
         return NextResponse.json({
             profile,
-            email: session.user.email,
+            email,
         });
     } catch (error) {
         console.error('Error fetching own profile:', error);
@@ -30,14 +33,21 @@ export async function GET() {
 
 export async function PUT(request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
-        if (!session?.user?.email) {
+        const email = await getAuthorizedEmail(request);
+        if (!email) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const body = (await request.json()) as ProfileUpdatePayload;
+        const parsed = await readJsonBody<unknown>(request);
+        if (!parsed.ok) {
+            return NextResponse.json({ error: parsed.error }, { status: 400 });
+        }
+        if (!isPlainObject(parsed.body)) {
+            return NextResponse.json({ error: 'Invalid profile payload' }, { status: 400 });
+        }
+        const body = parsed.body as ProfileUpdatePayload;
         await connectDB();
-        await ensureUserHasDefaultUsername(session.user.email);
+        await ensureUserHasDefaultUsername(email);
 
         const update: Record<string, unknown> = {};
 
@@ -57,26 +67,41 @@ export async function PUT(request: NextRequest) {
                     return NextResponse.json({ error: 'Invalid GitHub URL' }, { status: 400 });
                 }
             }
-            update.projects = sanitized.map((p) => ({
-                title: p.title,
-                description: p.description,
-                siteUrl: p.siteUrl,
-                githubUrl: p.githubUrl,
-                technologies: p.technologies,
-                createdAt: new Date(),
-            }));
+            const previousProjects = Array.isArray(body.projects) ? body.projects : [];
+            update.projects = sanitized.map((project, index) => {
+                const previous = previousProjects[index];
+                const previousCreatedAt = previous?.createdAt
+                    ? new Date(previous.createdAt)
+                    : null;
+                return {
+                    // Preserve ids/createdAt across saves when the order is
+                    // unchanged; otherwise every edit rewrote project history.
+                    ...(previous?._id ? { _id: previous._id } : {}),
+                    title: project.title,
+                    description: project.description,
+                    siteUrl: project.siteUrl,
+                    githubUrl: project.githubUrl,
+                    technologies: project.technologies,
+                    createdAt: previousCreatedAt && Number.isFinite(previousCreatedAt.getTime())
+                        ? previousCreatedAt
+                        : new Date(),
+                };
+            });
         }
         if (typeof body.showGithubContributions === 'boolean') {
             update.showGithubContributions = body.showGithubContributions;
         }
 
         const updatedUser = await User.findOneAndUpdate(
-            { email: session.user.email },
+            { email },
             { $set: update },
             { new: true, upsert: true }
         ).lean();
 
-        const profile = serializePublicProfile(updatedUser as Parameters<typeof serializePublicProfile>[0]);
+        const profile = serializePublicProfile(
+            updatedUser as Parameters<typeof serializePublicProfile>[0],
+            { includeGithubIdentity: true }
+        );
 
         return NextResponse.json({
             success: true,

@@ -12,7 +12,7 @@ interface CreateChainModalProps {
 export function CreateChainModal({ isOpen, onClose, onChainCreated }: CreateChainModalProps) {
     const [name, setName] = useState('');
     const [memberInput, setMemberInput] = useState('');
-    const [suggestions, setSuggestions] = useState<{username?: string, email: string}[]>([]);
+    const [suggestions, setSuggestions] = useState<{ username?: string; image?: string | null }[]>([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
     const [members, setMembers] = useState<string[]>([]);
     const [whatsappLink, setWhatsappLink] = useState('');
@@ -89,7 +89,8 @@ export function CreateChainModal({ isOpen, onClose, onChainCreated }: CreateChai
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!name || members.length === 0) return;
+        // The API always adds the creator, so a solo chain is valid.
+        if (!name) return;
 
         setIsSubmitting(true);
         try {
@@ -172,7 +173,8 @@ export function CreateChainModal({ isOpen, onClose, onChainCreated }: CreateChai
                             {showSuggestions && suggestions.length > 0 && (
                                 <div className="absolute top-[calc(100%+0.5rem)] left-0 right-0 bg-zinc-900 border border-white/10 rounded-xl overflow-hidden z-50 shadow-2xl max-h-48 overflow-y-auto">
                                     {suggestions.map((suggestion, index) => {
-                                        const identifier = suggestion.username || suggestion.email;
+                                        const identifier = suggestion.username;
+                                        if (!identifier) return null;
                                         return (
                                             <div
                                                 key={index}
@@ -189,8 +191,7 @@ export function CreateChainModal({ isOpen, onClose, onChainCreated }: CreateChai
                                                 }}
                                             >
                                                 <div className="flex flex-col">
-                                                    <span className="text-white text-sm font-medium">{suggestion.username || suggestion.email}</span>
-                                                    {suggestion.username && <span className="text-xs text-zinc-500">{suggestion.email}</span>}
+                                                    <span className="text-white text-sm font-medium">{suggestion.username}</span>
                                                 </div>
                                                 <div className="text-xs text-zinc-400 bg-white/5 px-2 py-1 rounded">Add</div>
                                             </div>
@@ -230,7 +231,7 @@ export function CreateChainModal({ isOpen, onClose, onChainCreated }: CreateChai
                         <LiquidButton 
                             type="submit" 
                             className="w-full py-4 text-white font-bold"
-                            disabled={isSubmitting || isCheckingMember || !name || members.length === 0}
+                            disabled={isSubmitting || isCheckingMember || !name}
                         >
                             {isSubmitting ? 'Creating...' : 'Create Chain'}
                         </LiquidButton>

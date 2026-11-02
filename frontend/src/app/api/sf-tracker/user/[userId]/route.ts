@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 import SFTracker from '@/models/SFTracker';
 import User from '@/models/User';
+import { isValidObjectIdString } from '@/lib/validate';
 
 export const dynamic = 'force-dynamic';
+
+const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export async function GET(
     request: NextRequest,
@@ -11,20 +14,35 @@ export async function GET(
 ) {
     try {
         const { userId } = await params;
-        const decodedUserId = decodeURIComponent(userId);
-        
+        // Next already decodes route params; decoding again throws on a literal %.
+        const identifier = userId.trim();
+        if (!identifier || identifier.length > 320) {
+            return NextResponse.json({ error: 'Invalid user identifier' }, { status: 400 });
+        }
+
         await connectDB();
 
-        // 1. Fetch User Profile mapping directly for metadata
-        const profile = await User.findOne({ email: decodedUserId }).lean() as any;
+        const lookup: Record<string, unknown>[] = [
+            { username: { $regex: `^${escapeRegex(identifier)}$`, $options: 'i' } },
+            { email: { $regex: `^${escapeRegex(identifier)}$`, $options: 'i' } },
+        ];
+        if (isValidObjectIdString(identifier)) {
+            lookup.push({ _id: identifier });
+        }
+
+        const profile = await User.findOne({ $or: lookup }).lean() as any;
+        if (!profile?.email) {
+            return NextResponse.json({ error: 'User not found' }, { status: 404 });
+        }
+
         const userProfile = {
-            username: profile?.username || decodedUserId.split('@')[0],
-            image: profile?.image || null,
-            email: decodedUserId
+            username: profile.username || profile.email.split('@')[0],
+            image: profile.image || null,
         };
 
-        // 2. Fetch User's SF targets mapping
-        const rawTargets = await SFTracker.find({ userId: decodedUserId }).sort({ createdAt: -1 }).lean() as any[];
+        const rawTargets = await SFTracker.find({ userId: profile.email })
+            .sort({ createdAt: -1 })
+            .lean() as any[];
 
         // 3. SECURE DATA SCRUBBING
         // We MUST enforce privacy. No target strings, success conditions, or failure reasons leak here.

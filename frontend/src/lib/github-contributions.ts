@@ -18,17 +18,34 @@ const CALENDAR_QUERY = `
   }
 `;
 
+const CALENDAR_CACHE_TTL_MS = 60 * 60 * 1000;
+const calendarCache = new Map<string, { data: GithubContributionCalendar; expiresAt: number }>();
+
+export function hasGithubCalendarToken(accessToken?: string | null): boolean {
+    return Boolean(process.env.GITHUB_TOKEN || process.env.GITHUB_PAT || accessToken);
+}
+
 export async function fetchGithubContributionCalendar(
-    username: string
+    username: string,
+    accessToken?: string | null
 ): Promise<GithubContributionCalendar | null> {
+    const cacheKey = username.toLowerCase();
+    const cached = calendarCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.data;
+    }
+
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
     };
 
-    const token = process.env.GITHUB_TOKEN || process.env.GITHUB_PAT;
-    if (token) {
-        headers.Authorization = `Bearer ${token}`;
+    // GitHub GraphQL requires authentication even for public calendars. Prefer
+    // the deployment token, then fall back to the profile owner's OAuth token.
+    const token = process.env.GITHUB_TOKEN || process.env.GITHUB_PAT || accessToken;
+    if (!token) {
+        return null;
     }
+    headers.Authorization = `Bearer ${token}`;
 
     try {
         const res = await fetch('https://api.github.com/graphql', {
@@ -38,7 +55,8 @@ export async function fetchGithubContributionCalendar(
                 query: CALENDAR_QUERY,
                 variables: { login: username },
             }),
-            next: { revalidate: 3600 },
+            cache: 'no-store',
+            signal: AbortSignal.timeout(15000),
         });
 
         if (!res.ok) {
@@ -65,10 +83,16 @@ export async function fetchGithubContributionCalendar(
                     })),
             }));
 
-        return {
+        const data = {
             totalContributions: Math.max(0, Number(calendar.totalContributions || 0)),
             weeks,
         };
+
+        calendarCache.set(cacheKey, {
+            data,
+            expiresAt: Date.now() + CALENDAR_CACHE_TTL_MS,
+        });
+        return data;
     } catch (error) {
         console.error('Error fetching GitHub contribution calendar:', error);
         return null;

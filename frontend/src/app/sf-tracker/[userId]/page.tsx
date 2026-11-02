@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useEffect } from 'react';
-import { useSession } from 'next-auth/react';
+import { useState, useEffect, use } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
@@ -19,7 +18,6 @@ interface SFTrackerItem {
 interface UserProfile {
     username: string;
     image: string | null;
-    email: string;
 }
 
 interface UserStats {
@@ -29,33 +27,50 @@ interface UserStats {
 }
 
 export default function UserSFTrackerPage({ params }: { params: Promise<{ userId: string }> }) {
-    const { data: session } = useSession();
+    const { userId } = use(params);
     const [targets, setTargets] = useState<SFTrackerItem[]>([]);
     const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
     const [userStats, setUserStats] = useState<UserStats | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        fetchUserData();
-    }, []);
+        let cancelled = false;
 
-    const fetchUserData = async () => {
-        try {
-            const { userId } = await params;
-            const res = await fetch(`/api/sf-tracker/user/${encodeURIComponent(userId)}`);
-            const data = await res.json();
-            
-            if (res.ok) {
+        const fetchUserData = async () => {
+            setIsLoading(true);
+            setError(null);
+            try {
+                const res = await fetch(`/api/sf-tracker/user/${encodeURIComponent(userId)}`);
+                const data = await res.json().catch(() => ({}));
+                if (cancelled) return;
+
+                if (!res.ok) {
+                    setError(data.error || 'Could not load this tracker.');
+                    setUserProfile(null);
+                    setUserStats(null);
+                    setTargets([]);
+                    return;
+                }
+
                 setUserProfile(data.user);
                 setUserStats(data.stats);
-                setTargets(data.targets);
+                setTargets(data.targets || []);
+            } catch (err) {
+                if (!cancelled) {
+                    console.error('Failed to fetch user SF data:', err);
+                    setError('Could not load this tracker.');
+                }
+            } finally {
+                if (!cancelled) setIsLoading(false);
             }
-        } catch (error) {
-            console.error('Failed to fetch user SF data:', error);
-        } finally {
-            setIsLoading(false);
-        }
-    };
+        };
+
+        fetchUserData();
+        return () => {
+            cancelled = true;
+        };
+    }, [userId]);
 
     const pendingTargets = targets.filter(t => t.status === 'Pending');
     const historyTargets = targets.filter(t => t.status !== 'Pending');
@@ -84,12 +99,18 @@ export default function UserSFTrackerPage({ params }: { params: Promise<{ userId
                                     </div>
                                 )}
                                 <div>
-                                    <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-white mb-2">{userProfile.username}'s Tracker <span className="text-sm font-normal text-zinc-500 tracking-normal ml-3">Read-only View</span></h1>
+                                    <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-white mb-2">{userProfile.username}&apos;s Tracker <span className="text-sm font-normal text-zinc-500 tracking-normal ml-3">Read-only View</span></h1>
                                     <p className="text-zinc-500 text-sm">Targets remain strictly confidential. Only execution status is globally exposed.</p>
                                 </div>
                             </div>
                         )}
                     </div>
+
+                    {error && !isLoading && (
+                        <div className="rounded-2xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                            {error}
+                        </div>
+                    )}
 
                     {/* Stats Dashboard */}
                     {isLoading ? (
@@ -182,7 +203,7 @@ export default function UserSFTrackerPage({ params }: { params: Promise<{ userId
                                         {target.status === 'Failure' && target.failureReason && (
                                             <div className="mt-3 bg-white/5 border border-white/10 rounded-lg p-3">
                                                 <span className="text-[10px] uppercase font-bold tracking-widest text-zinc-500 block mb-1">Reason for Failure</span>
-                                                <p className="text-sm text-zinc-400 italic">"🔒 Private Reflection Logged"</p>
+                                                <p className="text-sm text-zinc-400 italic">&quot;🔒 Private Reflection Logged&quot;</p>
                                             </div>
                                         )}
                                         {target.status === 'Success' && (

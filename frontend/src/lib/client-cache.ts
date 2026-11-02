@@ -22,17 +22,18 @@ const subscribers = new Map<string, Set<(data: unknown) => void>>();
 function readPersistentStorage<T>(key: string): CacheEntry<T> | null {
     if (typeof window === 'undefined') return null;
     const storageKey = STORAGE_PREFIX + key;
-    for (const storage of [window.sessionStorage, window.localStorage]) {
-        try {
-            const raw = storage.getItem(storageKey);
-            if (!raw) continue;
-            const parsed = JSON.parse(raw) as CacheEntry<T>;
-            if (parsed && typeof parsed === 'object' && typeof parsed.updatedAt === 'number') {
-                return parsed;
-            }
-        } catch {
-            // Ignore storage read/parse errors
+    // Session storage only. localStorage survived sign-out and leaked private
+    // tasks, settings, SF targets and idea titles to the next user on a shared
+    // browser.
+    try {
+        const raw = window.sessionStorage.getItem(storageKey);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as CacheEntry<T>;
+        if (parsed && typeof parsed === 'object' && typeof parsed.updatedAt === 'number') {
+            return parsed;
         }
+    } catch {
+        // Ignore storage read/parse errors
     }
     return null;
 }
@@ -51,10 +52,12 @@ function writePersistentStorage<T>(key: string, entry: CacheEntry<T>): void {
     } catch {
         // Ignore quota errors
     }
+    // Remove any legacy localStorage copy written by older builds so it can
+    // never be re-read after this fix.
     try {
-        window.localStorage.setItem(storageKey, serialized);
+        window.localStorage.removeItem(storageKey);
     } catch {
-        // Ignore quota errors
+        // Ignore storage errors
     }
 }
 
@@ -133,6 +136,29 @@ export function invalidateCache(keyOrPrefix: string, exact: boolean = false): vo
             } catch {
                 // Ignore storage errors
             }
+        }
+    }
+}
+
+/**
+ * Drop every cached response, including legacy localStorage entries. Call this
+ * on sign-in/sign-out so one account's private data never renders for another.
+ */
+export function clearAllCache(): void {
+    memoryCache.clear();
+    inFlightRequests.clear();
+
+    if (typeof window === 'undefined') return;
+    for (const storage of [window.sessionStorage, window.localStorage]) {
+        try {
+            for (let i = storage.length - 1; i >= 0; i--) {
+                const storageKey = storage.key(i);
+                if (storageKey?.startsWith(STORAGE_PREFIX)) {
+                    storage.removeItem(storageKey);
+                }
+            }
+        } catch {
+            // Ignore storage errors
         }
     }
 }

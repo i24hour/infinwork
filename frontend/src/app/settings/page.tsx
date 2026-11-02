@@ -13,6 +13,10 @@ interface SettingsResponse {
     points?: number;
     chainPoints?: number;
     githubUsername?: string | null;
+    githubConnectedAt?: string | null;
+    githubSyncError?: string | null;
+    githubSyncRetryAt?: string | null;
+    githubOAuthConfigured?: boolean;
     lastGithubSyncAt?: string | null;
 }
 
@@ -24,12 +28,33 @@ export default function SettingsPage() {
     const [githubPoints, setGithubPoints] = useState<number>(() => initialCached?.points || 0);
     const [chainPoints, setChainPoints] = useState<number>(() => initialCached?.chainPoints || 0);
     const [githubUsername, setGithubUsername] = useState<string | null>(() => initialCached?.githubUsername || null);
+    const [githubConnectedAt, setGithubConnectedAt] = useState<string | null>(() => initialCached?.githubConnectedAt || null);
     const [loading, setLoading] = useState<boolean>(() => !initialCached);
     const [saving, setSaving] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const [message, setMessage] = useState({ type: '', text: '' });
     const [lastGithubSyncAt, setLastGithubSyncAt] = useState<string | null>(() => initialCached?.lastGithubSyncAt || null);
+    const [githubSyncError, setGithubSyncError] = useState<string | null>(() => initialCached?.githubSyncError || null);
+    const [githubSyncRetryAt, setGithubSyncRetryAt] = useState<string | null>(() => initialCached?.githubSyncRetryAt || null);
+    const [githubOAuthConfigured, setGithubOAuthConfigured] = useState<boolean>(() => initialCached?.githubOAuthConfigured !== false);
     const [isRulesOpen, setIsRulesOpen] = useState(false);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const params = new URLSearchParams(window.location.search);
+        const error = params.get('githubError');
+        if (!error) return;
+
+        const messages: Record<string, string> = {
+            'link-expired': 'GitHub connection expired before it completed. Please try connecting again.',
+            'link-unavailable': 'Could not verify the GitHub connection. Please try again.',
+        };
+        setMessage({ type: 'error', text: messages[error] || 'GitHub connection failed. Please try again.' });
+
+        params.delete('githubError');
+        const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`;
+        window.history.replaceState({}, '', nextUrl);
+    }, []);
 
     const fetchSettings = useCallback(async (force: boolean = false) => {
         try {
@@ -54,7 +79,11 @@ export default function SettingsPage() {
             } else {
                 setGithubUsername(null);
             }
+            setGithubConnectedAt(data.githubConnectedAt || null);
             setLastGithubSyncAt(data.lastGithubSyncAt || null);
+            setGithubSyncError(data.githubSyncError || null);
+            setGithubSyncRetryAt(data.githubSyncRetryAt || null);
+            setGithubOAuthConfigured(data.githubOAuthConfigured !== false);
         } catch (err) {
             console.error('Error fetching settings:', err);
         } finally {
@@ -64,6 +93,14 @@ export default function SettingsPage() {
 
     useEffect(() => {
         if (status === 'unauthenticated') {
+            setUsername('');
+            setTotalScore(0);
+            setGithubPoints(0);
+            setChainPoints(0);
+            setGithubUsername(null);
+            setLastGithubSyncAt(null);
+            setGithubSyncError(null);
+            setGithubSyncRetryAt(null);
             setLoading(false);
             return;
         }
@@ -114,7 +151,7 @@ export default function SettingsPage() {
             } else {
                 setMessage({ type: 'error', text: data.error || 'Failed to update username' });
             }
-        } catch (err) {
+        } catch {
             setMessage({ type: 'error', text: 'An error occurred. Please try again.' });
         } finally {
             setSaving(false);
@@ -128,13 +165,16 @@ export default function SettingsPage() {
             const res = await fetch('/api/user/disconnect-github', { method: 'POST' });
             if (res.ok) {
                 setGithubUsername(null);
+                setGithubConnectedAt(null);
                 setLastGithubSyncAt(null);
+                setGithubSyncError(null);
+                setGithubSyncRetryAt(null);
                 await fetchSettings(true);
                 setMessage({ type: 'success', text: 'GitHub disconnected successfully.' });
             } else {
                 setMessage({ type: 'error', text: 'Failed to disconnect GitHub.' });
             }
-        } catch (err) {
+        } catch {
             setMessage({ type: 'error', text: 'Error disconnecting GitHub.' });
         } finally {
             setSyncing(false);
@@ -151,11 +191,17 @@ export default function SettingsPage() {
             if (res.ok) {
                 setLastGithubSyncAt(data.lastGithubSyncAt || new Date().toISOString());
                 await fetchSettings(true);
-                setMessage({ type: 'success', text: `Sync complete! Earned ${data.pointsEarned} GitHub points.` });
+                setMessage({
+                    type: 'success',
+                    text: data.skipped
+                        ? (data.message || 'GitHub was synced recently; no new data yet.')
+                        : `Sync complete! Earned ${data.pointsEarned} GitHub points.`,
+                });
             } else {
+                setGithubSyncError(data.error || 'Failed to sync GitHub');
                 setMessage({ type: 'error', text: data.error || 'Failed to sync GitHub' });
             }
-        } catch (err) {
+        } catch {
             setMessage({ type: 'error', text: 'Error syncing GitHub data.' });
         } finally {
             setSyncing(false);
@@ -165,13 +211,22 @@ export default function SettingsPage() {
     const handleConnectGithub = async () => {
         // Ask the server to set a short-lived signed link cookie so NextAuth
         // merges GitHub onto this account instead of replacing the session.
-        // Falls back to a plain GitHub sign-in when the init call fails.
+        // Never start OAuth if that cookie could not be minted.
+        setMessage({ type: '', text: '' });
         try {
-            await fetch('/api/user/link-github-init', { method: 'POST' });
+            const res = await fetch('/api/user/link-github-init', { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                setMessage({
+                    type: 'error',
+                    text: data.error || 'Could not start GitHub connection. Please try again.',
+                });
+                return;
+            }
+            await signIn('github');
         } catch {
-            // fall through to signIn below
+            setMessage({ type: 'error', text: 'Could not start GitHub connection. Please try again.' });
         }
-        signIn('github');
     };
 
     const totalScoreAccentClass = totalScore < 0
@@ -273,15 +328,33 @@ export default function SettingsPage() {
                                                 ? `Connected as @${githubUsername}` 
                                                 : 'Connect GitHub to earn +10 points for every commit.'}
                                         </p>
+                                        {githubUsername && githubConnectedAt && (
+                                            <p className="text-xs text-zinc-500 mt-2">
+                                                Points are counted from {new Date(githubConnectedAt).toLocaleString()}; commits before you connected are not included. Private commits appear only if GitHub&apos;s &quot;Include private contributions on my profile&quot; setting is on.
+                                            </p>
+                                        )}
                                         {githubUsername && (
                                             <p className="text-xs text-zinc-500 mt-2">
-                                                Auto-sync checks every 15 seconds while this page is open{lastGithubSyncAt ? ` - last sync ${new Date(lastGithubSyncAt).toLocaleString()}` : ''}.
+                                                Auto-sync checks every couple of minutes while this page is open{lastGithubSyncAt ? ` - last sync ${new Date(lastGithubSyncAt).toLocaleString()}` : ''}.
+                                            </p>
+                                        )}
+                                        {githubSyncError && (
+                                            <p className="text-xs text-amber-400 mt-2">
+                                                {githubSyncError}
+                                                {githubSyncRetryAt
+                                                    ? ` Next automatic retry: ${new Date(githubSyncRetryAt).toLocaleTimeString()}.`
+                                                    : ''}
+                                            </p>
+                                        )}
+                                        {!githubOAuthConfigured && (
+                                            <p className="text-xs text-amber-400 mt-2">
+                                                GitHub sign-in is not configured on this deployment.
                                             </p>
                                         )}
                                     </div>
-                                    <div>
+                                    <div className="flex flex-wrap justify-end gap-2">
                                         {githubUsername ? (
-                                            <div className="flex gap-2">
+                                            <>
                                                 <LiquidButton 
                                                     onClick={handleSyncGithub}
                                                     disabled={syncing}
@@ -289,6 +362,16 @@ export default function SettingsPage() {
                                                 >
                                                     {syncing ? 'Loading...' : 'Sync Now'}
                                                 </LiquidButton>
+                                                {githubSyncError && (
+                                                    <LiquidButton
+                                                        onClick={handleConnectGithub}
+                                                        disabled={syncing}
+                                                        className="px-4 py-2 text-white"
+                                                        variant="outline"
+                                                    >
+                                                        Reconnect
+                                                    </LiquidButton>
+                                                )}
                                                 <button
                                                     onClick={handleDisconnectGithub}
                                                     disabled={syncing}
@@ -296,8 +379,8 @@ export default function SettingsPage() {
                                                 >
                                                     Disconnect
                                                 </button>
-                                            </div>
-                                        ) : (
+                                            </>
+                                        ) : githubOAuthConfigured ? (
                                             <LiquidButton 
                                                 onClick={handleConnectGithub}
                                                 className="px-6 py-2 text-white"
@@ -305,7 +388,7 @@ export default function SettingsPage() {
                                             >
                                                 Connect GitHub
                                             </LiquidButton>
-                                        )}
+                                        ) : null}
                                     </div>
                                 </div>
                             </div>

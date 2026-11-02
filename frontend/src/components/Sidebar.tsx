@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import {
+    clearAllCache,
     fetchWithCache,
     getCachedData,
     getInitialIsLightTheme,
@@ -34,10 +35,6 @@ export function Sidebar() {
         return cached?.username ? { username: cached.username } : {};
     });
     const [theme, setTheme] = useState<'dark' | 'light'>(() => (getInitialIsLightTheme() ? 'light' : 'dark'));
-
-    useEffect(() => {
-        setIsOpen(false);
-    }, [pathname]);
 
     useEffect(() => {
         if (theme === 'light') {
@@ -80,6 +77,9 @@ export function Sidebar() {
     useEffect(() => {
         if (!session?.user?.email) return;
 
+        // Initial hydration is intentional; the subsequent updates come from
+        // the interval and visibility listener.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         fetchUserProfile();
 
         const interval = setInterval(() => {
@@ -181,6 +181,7 @@ export function Sidebar() {
                                 onMouseEnter={() => handleWarmNav(item)}
                                 onFocus={() => handleWarmNav(item)}
                                 onTouchStart={() => handleWarmNav(item)}
+                                onClick={() => setIsOpen(false)}
                                 className="block w-full"
                             >
                                 <LiquidButton
@@ -236,7 +237,7 @@ export function Sidebar() {
                                     <div className="text-sm font-medium text-white truncate">{userProfile.username || session.user?.name || 'User'}</div>
                                 </div>
                             </div>
-                            <button onClick={() => signOut()} className="p-2 text-zinc-500 hover:text-white transition-colors shrink-0" title="Sign Out">
+                            <button onClick={() => { clearAllCache(); signOut(); }} className="p-2 text-zinc-500 hover:text-white transition-colors shrink-0" title="Sign Out">
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                                 </svg>

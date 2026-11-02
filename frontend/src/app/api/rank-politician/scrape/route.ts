@@ -20,8 +20,11 @@ export async function POST(request: NextRequest) {
         const slugs = Array.isArray(body?.slugs)
             ? body.slugs.filter((s: unknown) => typeof s === 'string')
             : undefined;
+        // Explicitly choosing a profile means "scrape it now", not "respect
+        // the 20h success cooldown".
+        const force = body?.force === true || Boolean(slugs?.length);
 
-        const result = await runRankPoliticianScrapeBatch({ limit, slugs });
+        const result = await runRankPoliticianScrapeBatch({ limit, slugs, force });
 
         return NextResponse.json({
             message: 'Scrape batch completed',

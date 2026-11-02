@@ -24,16 +24,17 @@ interface SFTrackerItem {
 }
 
 interface SFLeaderboardUser {
-    userId: string;
+    publicId: string | null;
     username: string;
     image: string | null;
     totalTasks: number;
     successTasks: number;
     failureTasks: number;
+    successRate?: number;
 }
 
 export default function SFTrackerPage() {
-    const { data: session, status } = useSession();
+    const { status } = useSession();
     const initialTargets = getCachedData<{ targets?: SFTrackerItem[] }>('/api/sf-tracker');
     const initialLeaderboard = getCachedData<{ leaderboard?: SFLeaderboardUser[] }>('/api/sf-tracker/all');
     const [targets, setTargets] = useState<SFTrackerItem[]>(() => initialTargets?.targets || []);
@@ -54,7 +55,11 @@ export default function SFTrackerPage() {
 
     useEffect(() => {
         if (status === 'unauthenticated') {
+            // Never keep a previous account's private targets in view.
+            setTargets([]);
+            setLeaderboard([]);
             setIsLoading(false);
+            setIsLeaderboardLoading(false);
             return;
         }
         fetchTargets();
@@ -111,10 +116,13 @@ export default function SFTrackerPage() {
                 body: JSON.stringify({ target: newTarget, successCondition: newCondition }),
             });
             const data = await res.json();
+            if (!res.ok) throw new Error(data?.error || 'Failed to create target');
             if (data.target) {
-                const next = [data.target, ...targets];
-                setTargets(next);
-                setCachedData('/api/sf-tracker', { targets: next });
+                setTargets(prev => {
+                    const next = [data.target, ...prev];
+                    setCachedData('/api/sf-tracker', { targets: next });
+                    return next;
+                });
                 invalidateCache('/api/sf-tracker/all');
                 setNewTarget('');
                 setNewCondition('');
@@ -133,12 +141,18 @@ export default function SFTrackerPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: 'Success' }),
             });
-            if (res.ok) {
-                const next = targets.map(t => t._id === id ? { ...t, status: 'Success' as const } : t);
-                setTargets(next);
-                setCachedData('/api/sf-tracker', { targets: next });
-                invalidateCache('/api/sf-tracker/all');
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data?.error || 'Failed to mark success');
             }
+            setTargets(prev => {
+                const next = prev.map(t => t._id === id
+                    ? { ...t, status: 'Success' as const, failureReason: '' }
+                    : t);
+                setCachedData('/api/sf-tracker', { targets: next });
+                return next;
+            });
+            invalidateCache('/api/sf-tracker/all');
         } catch (error) {
             console.error('Failed to mark success:', error);
         }
@@ -160,15 +174,21 @@ export default function SFTrackerPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: 'Failure', failureReason: failureReason }),
             });
-            if (res.ok) {
-                const next = targets.map(t => 
-                    t._id === failingTargetId ? { ...t, status: 'Failure' as const, failureReason: failureReason } : t
-                );
-                setTargets(next);
-                setCachedData('/api/sf-tracker', { targets: next });
-                invalidateCache('/api/sf-tracker/all');
-                setFailureModalOpen(false);
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data?.error || 'Failed to mark failure');
             }
+            setTargets(prev => {
+                const next = prev.map(t =>
+                    t._id === failingTargetId
+                        ? { ...t, status: 'Failure' as const, failureReason }
+                        : t
+                );
+                setCachedData('/api/sf-tracker', { targets: next });
+                return next;
+            });
+            invalidateCache('/api/sf-tracker/all');
+            setFailureModalOpen(false);
         } catch (error) {
             console.error('Failed to submit failure:', error);
         } finally {
@@ -180,12 +200,16 @@ export default function SFTrackerPage() {
         if (!confirm('Delete this tracker permanently?')) return;
         try {
             const res = await fetch(`/api/sf-tracker/${id}`, { method: 'DELETE' });
-            if (res.ok) {
-                const next = targets.filter(t => t._id !== id);
-                setTargets(next);
-                setCachedData('/api/sf-tracker', { targets: next });
-                invalidateCache('/api/sf-tracker/all');
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data?.error || 'Failed to delete target');
             }
+            setTargets(prev => {
+                const next = prev.filter(t => t._id !== id);
+                setCachedData('/api/sf-tracker', { targets: next });
+                return next;
+            });
+            invalidateCache('/api/sf-tracker/all');
         } catch (error) {
             console.error('Failed to delete target:', error);
         }
@@ -398,7 +422,7 @@ export default function SFTrackerPage() {
                                         {target.status === 'Failure' && target.failureReason && (
                                             <div className="bg-rose-500/5 border border-rose-500/10 rounded-xl p-4">
                                                 <span className="text-[9px] uppercase font-black tracking-widest text-rose-500/60 block mb-1">Reason for Failure</span>
-                                                <p className="text-sm text-zinc-400 italic">"{target.failureReason}"</p>
+                                                <p className="text-sm text-zinc-400 italic">&quot;{target.failureReason}&quot;</p>
                                             </div>
                                         )}
                                         {target.status === 'Success' && (
@@ -435,7 +459,7 @@ export default function SFTrackerPage() {
                         </div>
                     ) : (
                         leaderboard.map((user, index) => (
-                            <Link key={user.userId} href={`/sf-tracker/${encodeURIComponent(user.userId)}`}>
+                            <Link key={user.publicId || user.username} href={`/sf-tracker/${encodeURIComponent(user.publicId || user.username)}`}>
                                 <div className="group bg-white/5 border border-white/10 hover:border-white/20 hover:bg-white/10 rounded-2xl p-5 md:p-6 transition-all flex flex-col md:flex-row items-start md:items-center gap-6 relative shadow-lg overflow-hidden cursor-pointer transition-transform hover:-translate-y-1 mb-4">
                                     {/* Rank Indicator */}
                                     <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-black border border-white/10 text-zinc-400 font-bold shrink-0">

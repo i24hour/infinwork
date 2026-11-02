@@ -12,6 +12,13 @@ export async function POST() {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
+        // Optional hardening: when set, only this address may bootstrap the
+        // first admin. Without it, the first authenticated visitor can claim.
+        const bootstrapEmail = process.env.ADMIN_BOOTSTRAP_EMAIL?.trim().toLowerCase();
+        if (bootstrapEmail && session.user.email.toLowerCase() !== bootstrapEmail) {
+            return NextResponse.json({ error: 'This account cannot bootstrap admin access.' }, { status: 403 });
+        }
+
         const result = await claimFirstAdmin(session.user.email);
         if (!result.claimed) {
             return NextResponse.json(

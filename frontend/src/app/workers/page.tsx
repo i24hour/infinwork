@@ -30,7 +30,9 @@ function useIsLightTheme() {
 }
 
 interface WorkerStats {
-    userId: string;
+    publicId?: string;
+    /** Legacy cached payloads used the email as the id. */
+    userId?: string;
     username?: string;
     image?: string;
     totalTasks: number;
@@ -61,7 +63,8 @@ const WorkerCard = memo(function WorkerCard({
     currentScore: number;
     isLightTheme: boolean;
 }) {
-    const encodedUserId = encodeURIComponent(worker.userId);
+    const publicId = worker.publicId || worker.userId || 'anonymous';
+    const encodedUserId = encodeURIComponent(publicId);
     return (
         <Link
             href={`/workers/${encodedUserId}`}
@@ -83,15 +86,15 @@ const WorkerCard = memo(function WorkerCard({
                         {worker.image ? (
                             <img src={worker.image} alt="" className="w-full h-full object-cover" />
                         ) : (
-                            worker.username?.charAt(0) || worker.userId.charAt(0)
+                            worker.username?.charAt(0) || publicId.charAt(0)
                         )}
                     </div>
                     <div className="flex-1 min-w-[150px] overflow-hidden">
-                        <h3 className={`text-lg font-medium truncate ${isLightTheme ? 'text-zinc-900' : 'text-zinc-200'}`} title={worker.username || worker.userId}>
-                            {worker.username || worker.userId.split('@')[0]}
+                        <h3 className={`text-lg font-medium truncate ${isLightTheme ? 'text-zinc-900' : 'text-zinc-200'}`} title={worker.username || publicId}>
+                            {worker.username || 'Anonymous'}
                         </h3>
-                        <p className={`text-xs truncate ${isLightTheme ? 'text-zinc-700' : 'text-zinc-500'}`} title="Email hidden for privacy">
-                            {worker.userId.split('@')[0].slice(0, 3)}••••@•••.com
+                        <p className={`text-xs truncate ${isLightTheme ? 'text-zinc-700' : 'text-zinc-500'}`} title="Public worker profile">
+                            @{publicId}
                         </p>
                     </div>
                 </div>
@@ -163,7 +166,7 @@ function LiveWorkerList({ initialWorkers }: { initialWorkers: WorkerStats[] }) {
             ) : (
                 sortedWorkers.map(({ worker, currentScore }, index) => (
                     <WorkerCard
-                        key={worker.userId}
+                        key={worker.publicId || worker.userId || index}
                         worker={worker}
                         rank={index + 1}
                         currentScore={currentScore}

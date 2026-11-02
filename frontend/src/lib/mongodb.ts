@@ -1,11 +1,5 @@
 import mongoose from 'mongoose';
 
-const MONGODB_URI = process.env.MONGODB_URI || '';
-
-if (!MONGODB_URI) {
-    throw new Error('Please define MONGODB_URI in your .env.local file');
-}
-
 interface MongooseCache {
     conn: typeof mongoose | null;
     promise: Promise<typeof mongoose> | null;
@@ -16,7 +10,7 @@ declare global {
     var mongoose: MongooseCache | undefined;
 }
 
-let cached: MongooseCache = global.mongoose || { conn: null, promise: null };
+const cached: MongooseCache = global.mongoose || { conn: null, promise: null };
 
 if (!global.mongoose) {
     global.mongoose = cached;
@@ -25,6 +19,13 @@ if (!global.mongoose) {
 async function connectDB(): Promise<typeof mongoose> {
     if (cached.conn) {
         return cached.conn;
+    }
+
+    // Resolve lazily so importing a route during `next build` does not crash
+    // page-data collection when local env vars are absent.
+    const MONGODB_URI = process.env.MONGODB_URI;
+    if (!MONGODB_URI) {
+        throw new Error('Please define MONGODB_URI in your .env.local file');
     }
 
     if (!cached.promise) {

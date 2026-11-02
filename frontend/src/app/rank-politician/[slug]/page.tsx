@@ -176,7 +176,7 @@ export default function RankPoliticianDetailPage() {
             const response = await fetch('/api/rank-politician/scrape', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ limit: 1, slugs: [politician.slug] }),
+                body: JSON.stringify({ limit: 1, slugs: [politician.slug], force: true }),
             });
             const data = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(data.error || 'Scrape failed');
@@ -185,7 +185,7 @@ export default function RankPoliticianDetailPage() {
                 result
                     ? `${result.status}: ${result.postsUpserted || 0} posts upserted` +
                           (result.error ? ` (${result.error})` : '')
-                    : 'Scrape finished'
+                    : 'Nothing was scraped for this profile.'
             );
             invalidateCache('/api/rank-politician');
             await fetchDetail(true);

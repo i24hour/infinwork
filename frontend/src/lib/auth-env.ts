@@ -8,12 +8,23 @@ const DEV_ONLY_SECRET = 'dev-only-nextauth-secret-do-not-use-in-production';
  * clearly-labeled dev-only secret.
  */
 export function resolveAuthSecret(): string {
-    const configured = process.env.NEXTAUTH_SECRET;
+    const configured = process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET;
     if (configured) return configured;
     if (process.env.NODE_ENV === 'production') {
+        // `next build` evaluates route modules before runtime env is available
+        // on some hosts. Allow the build to finish, but still refuse to serve
+        // with an insecure secret at runtime.
+        if (process.env.NEXT_PHASE === 'phase-production-build') {
+            return DEV_ONLY_SECRET;
+        }
         throw new Error('NEXTAUTH_SECRET is not set. Refusing to start without a session secret in production.');
     }
     return DEV_ONLY_SECRET;
+}
+
+/** GitHub OAuth is optional; both halves must be present before we offer it. */
+export function isGithubOAuthConfigured(): boolean {
+    return Boolean(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET);
 }
 
 /**
@@ -22,5 +33,8 @@ export function resolveAuthSecret(): string {
  * local development only.
  */
 export function isDemoCredentialsEnabled(): boolean {
+    // Never register a passwordless provider in production, even if the flag
+    // was copied from a local .env file by mistake.
+    if (process.env.NODE_ENV === 'production') return false;
     return process.env.ALLOW_DEMO_CREDENTIALS === 'true';
 }

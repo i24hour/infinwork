@@ -83,19 +83,29 @@ export default function ProfileEditorPage() {
 
     const handleConnectGithub = async () => {
         try {
-            await fetch('/api/user/link-github-init', { method: 'POST' });
+            const res = await fetch('/api/user/link-github-init', { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                alert(data.error || 'Could not start GitHub connection. Please try again.');
+                return;
+            }
+            await signIn('github');
         } catch {
-            // fall through to signIn below
+            alert('Could not start GitHub connection. Please try again.');
         }
-        signIn('github');
     };
 
     const handleHideGithub = async () => {
-        await fetch('/api/profile', {
+        const res = await fetch('/api/profile', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ showGithubContributions: false }),
         });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            alert(data.error || 'Could not hide GitHub contributions. Please try again.');
+            return;
+        }
         setProfile((p) => {
             const next = p ? { ...p, showGithubContributions: false } : p;
             if (next) setCachedData('/api/profile', { profile: next });
@@ -105,11 +115,16 @@ export default function ProfileEditorPage() {
     };
 
     const handleShowGithub = async () => {
-        await fetch('/api/profile', {
+        const res = await fetch('/api/profile', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ showGithubContributions: true }),
         });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            alert(data.error || 'Could not show GitHub contributions. Please try again.');
+            return;
+        }
         setProfile((p) => {
             const next = p ? { ...p, showGithubContributions: true } : p;
             if (next) setCachedData('/api/profile', { profile: next });

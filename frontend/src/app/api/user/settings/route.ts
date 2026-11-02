@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { getAuthorizedEmail } from '@/lib/mobile-auth';
 import connectDB from '@/lib/mongodb';
 import User from '@/models/User';
@@ -9,6 +7,7 @@ import { ensureUserHasDefaultUsername } from '@/lib/username';
 import { syncGithubForUserByEmail } from '@/lib/github-sync';
 import { getScoreBreakdownAtTime } from '@/lib/score';
 import { recomputeChainPointsForUsers } from '@/lib/chain-points';
+import { isGithubOAuthConfigured } from '@/lib/auth-env';
 
 export async function GET(request: NextRequest) {
     try {
@@ -57,6 +56,10 @@ export async function GET(request: NextRequest) {
             baseScore: scoreBreakdown.penalizedBaseScore,
             idlePenalty: scoreBreakdown.idlePenalty,
             githubUsername: user?.githubUsername || null,
+            githubConnectedAt: user?.githubConnectedAt || null,
+            githubSyncError: user?.githubSyncError || null,
+            githubSyncRetryAt: user?.githubSyncRetryAt || null,
+            githubOAuthConfigured: isGithubOAuthConfigured(),
             lastGithubSyncAt: user?.lastGithubSyncAt || null,
             githubPointsLastUpdatedAt: user?.githubPointsLastUpdatedAt || user?.githubConnectedAt || null,
             githubPointsHistory: user?.githubPointsHistory || [],
@@ -68,17 +71,18 @@ export async function GET(request: NextRequest) {
     }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
     try {
-        const session = await getServerSession(authOptions);
-        if (!session?.user?.email) {
+        const email = await getAuthorizedEmail(request);
+        if (!email) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const { username } = await request.json();
+        const body = await request.json().catch(() => null);
+        const username = typeof body?.username === 'string' ? body.username : '';
         
-        if (!username || username.length < 3) {
-            return NextResponse.json({ error: 'Username must be at least 3 characters long' }, { status: 400 });
+        if (!username || username.length < 3 || username.length > 30) {
+            return NextResponse.json({ error: 'Username must be between 3 and 30 characters' }, { status: 400 });
         }
 
         // Basic character validation
@@ -93,7 +97,7 @@ export async function POST(request: Request) {
         const lowerUsername = username.trim().toLowerCase();
         const existingUser = await User.findOne({ 
             username: lowerUsername, 
-            email: { $ne: session.user.email } 
+            email: { $ne: email }
         });
 
         if (existingUser) {
@@ -102,7 +106,7 @@ export async function POST(request: Request) {
 
         // Upsert the user document
         const updatedUser = await User.findOneAndUpdate(
-            { email: session.user.email },
+            { email },
             { $set: { username: lowerUsername } },
             { new: true, upsert: true }
         );

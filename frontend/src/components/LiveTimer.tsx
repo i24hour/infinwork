@@ -32,6 +32,11 @@ export function LiveTimer({ task, getElapsedSeconds, formatElapsed }: LiveTimerP
         // Only run the timer if the task is currently active (running)
         if (!task.enabled || task.completed) return;
 
+        // Reset immediately on resume. Otherwise the first render reuses the
+        // timestamp from before the pause and briefly shows a negative delta.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setCurrentTime(Date.now());
+
         const interval = setInterval(() => {
             setCurrentTime(Date.now());
         }, 1000);

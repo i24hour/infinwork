@@ -13,8 +13,14 @@ export interface ITimeTask {
     cancelledAt?: number;
     cancelReason?: string;
     milestones: Array<{
+        id?: string;
         text: string;
-        timestamp: number;
+        completed?: boolean;
+        completedAt?: number;
+        createdAt?: number;
+        createdAtElapsed?: number;
+        /** Legacy field used before milestone ids/timestamps were split. */
+        timestamp?: number;
     }>;
     events?: Array<{
         type: 'start' | 'pause' | 'complete';
@@ -67,8 +73,13 @@ const ITimeTaskSchema = new mongoose.Schema<ITimeTask>({
         type: String,
     },
     milestones: [{
-        text: String,
-        timestamp: Number,
+        id: String,
+        text: { type: String, required: true },
+        completed: { type: Boolean, default: false },
+        completedAt: Number,
+        createdAt: { type: Number, default: Date.now },
+        createdAtElapsed: { type: Number, default: 0 },
+        timestamp: Number, // legacy
     }],
     events: [{
         type: { type: String, enum: ['start', 'pause', 'complete'] },
