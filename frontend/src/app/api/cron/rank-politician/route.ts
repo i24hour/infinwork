@@ -3,6 +3,7 @@ import {
     RANK_POLITICIAN_BATCH_SIZE,
     runRankPoliticianScrapeBatch,
 } from '@/lib/rank-politician/pipeline';
+import { syncPoliticianSeeds } from '@/lib/rank-politician/seed-sync';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -34,6 +35,17 @@ export async function GET(request: NextRequest) {
             ? limitParam
             : RANK_POLITICIAN_BATCH_SIZE;
 
+        // Apply corrected handles / newly added cabinet members before
+        // selecting the batch. A handle reset marks the profile `never`, so it
+        // is re-scraped in this same run instead of waiting for an admin click.
+        let seedSync = null;
+        try {
+            seedSync = await syncPoliticianSeeds();
+            console.log('[CRON] rank-politician seed sync', seedSync);
+        } catch (seedError) {
+            console.error('[CRON] rank-politician seed sync failed:', seedError);
+        }
+
         console.log('[CRON] rank-politician scrape started', new Date().toISOString());
         const result = await runRankPoliticianScrapeBatch({ limit });
         console.log('[CRON] rank-politician scrape finished', {
@@ -52,6 +64,7 @@ export async function GET(request: NextRequest) {
                     status: 'error',
                     message: 'Firecrawl credit guard triggered — scraping paused',
                     ...result,
+                    ...(seedSync ? { seedSync } : {}),
                 },
                 { status: 402 }
             );
@@ -65,6 +78,7 @@ export async function GET(request: NextRequest) {
                 status: allAttemptsFailed ? 'error' : 'ok',
                 message: allAttemptsFailed ? 'Every scrape in this batch failed' : undefined,
                 ...result,
+                ...(seedSync ? { seedSync } : {}),
             },
             { status: allAttemptsFailed ? 502 : 200 }
         );
