@@ -57,6 +57,8 @@ export async function syncPoliticianSeeds(
                         lastScrapeStatus: 'never',
                         lastScrapedAt: null,
                         lastScrapeError: null,
+                        lastScrapePostCount: 0,
+                        lastScrapeProvider: null,
                         stats: doc.stats,
                     }
                     : {}),

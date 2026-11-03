@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 import Politician from '@/models/Politician';
 import PoliticianPost from '@/models/PoliticianPost';
+import { RANK_POLITICIAN_SCORE_WINDOW_DAYS } from '@/lib/rank-politician/score';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,16 +23,24 @@ export async function GET(
             return NextResponse.json({ error: 'Politician not found' }, { status: 404 });
         }
 
-        // Only real status posts. Legacy Google News headlines and profile
-        // shell blocks are not authored posts and must not be displayed as if
-        // they were. Filter in the query so the 100-row limit isn't consumed
-        // by unverifiable rows.
+        // Only real status posts in the same rolling window used by the
+        // stats. Legacy Google News headlines and profile-shell blocks are not
+        // authored posts and must not be displayed as if they were. Filter in
+        // the query so the 100-row limit isn't consumed by unverifiable rows.
+        const windowStart = new Date(
+            Date.now() - RANK_POLITICIAN_SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000
+        );
         const posts = await PoliticianPost.find({
             politicianId: politician._id,
             postUrl: {
                 $regex: '(?:x\\.com|twitter\\.com)\\/[^/]+\\/status\\/\\d+',
                 $options: 'i',
             },
+            $or: [
+                { postedAt: { $gte: windowStart } },
+                { postedAt: { $exists: false }, createdAt: { $gte: windowStart } },
+                { postedAt: null, createdAt: { $gte: windowStart } },
+            ],
         })
             .sort({ postedAt: -1, createdAt: -1 })
             .limit(100)
@@ -52,6 +61,12 @@ export async function GET(
                 lastScrapedAt: politician.lastScrapedAt || null,
                 lastScrapeStatus: politician.lastScrapeStatus || 'never',
                 lastScrapeError: politician.lastScrapeError || null,
+                lastScrapePostCount:
+                    typeof politician.lastScrapePostCount === 'number'
+                        ? politician.lastScrapePostCount
+                        : null,
+                lastScrapeProvider: politician.lastScrapeProvider || null,
+                windowDays: RANK_POLITICIAN_SCORE_WINDOW_DAYS,
                 stats: {
                     netScore: Number(politician.stats?.netScore ?? 0),
                     onPortfolioPct: Number(politician.stats?.onPortfolioPct ?? 0),

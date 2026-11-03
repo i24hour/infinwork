@@ -40,7 +40,10 @@ export async function GET(request: NextRequest) {
         // is re-scraped in this same run instead of waiting for an admin click.
         let seedSync = null;
         try {
-            seedSync = await syncPoliticianSeeds();
+            // Recompute every profile so a scoring-window change applies to
+            // existing data immediately, not only after each profile is
+            // re-scraped.
+            seedSync = await syncPoliticianSeeds({ recomputeAllStats: true });
             console.log('[CRON] rank-politician seed sync', seedSync);
         } catch (seedError) {
             console.error('[CRON] rank-politician seed sync failed:', seedError);
@@ -54,6 +57,7 @@ export async function GET(request: NextRequest) {
             errorCount: result.errorCount,
             creditGuardTriggered: result.creditGuardTriggered,
             creditsRemaining: result.creditsRemaining,
+            prunedPosts: result.prunedPosts,
         });
 
         // Fail loud when credits are exhausted so GitHub Actions does not look "green"

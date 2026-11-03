@@ -84,7 +84,7 @@ export function CommandPalette() {
 
         Promise.all([
             fetchWithCache<{ workers?: WorkerRow[] }>('/api/workers', { dedupingIntervalMs: 30000 }).catch(() => ({ workers: [] })),
-            fetchWithCache<{ politicians?: PoliticianRow[] }>('/api/rank-politician?sortBy=netScore', { dedupingIntervalMs: 30000 }).catch(() => ({ politicians: [] })),
+            fetchWithCache<{ politicians?: PoliticianRow[] }>('/api/rank-politician?sortBy=onPortfolioPct', { dedupingIntervalMs: 30000 }).catch(() => ({ politicians: [] })),
         ]).then(([workerData, politicianData]) => {
             setWorkers((workerData.workers || []).slice(0, 20));
             setPoliticians((politicianData.politicians || []).slice(0, 30));

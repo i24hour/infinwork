@@ -6,7 +6,7 @@ export interface ScrapedPostCandidate {
     rawMarkdown?: string;
 }
 
-export type ScrapeProviderName = 'jina' | 'firecrawl' | 'google-news-rss';
+export type ScrapeProviderName = 'jina' | 'firecrawl';
 
 export interface FirecrawlScrapeResult {
     markdown: string;
@@ -415,80 +415,6 @@ export async function scrapeXProfileWithJina(
             links,
             provider: 'jina',
         };
-    } finally {
-        clearTimeout(timeout);
-    }
-}
-
-function decodeXmlEntities(input: string): string {
-    return input
-        .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;|&apos;/g, "'")
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-/**
- * Zero-cost RSS fallback via Google News RSS for a minister + portfolio keywords.
- * Used only when both Jina Reader and Firecrawl cannot extract posts from X.
- */
-export async function fetchPoliticianPostsFromGoogleNewsRss(options: {
-    name: string;
-    xHandle: string;
-    portfolio?: string;
-}): Promise<ScrapedPostCandidate[]> {
-    const normalizedHandle = options.xHandle.replace(/^@/, '').toLowerCase();
-    const query = `"${options.name}"`;
-    const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-IN&gl=IN&ceid=IN:en`;
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-
-    try {
-        const res = await fetch(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (compatible; InfinworkBot/1.0)',
-                Accept: 'application/rss+xml, application/xml, text/xml',
-            },
-            cache: 'no-store',
-            signal: controller.signal,
-        });
-        if (!res.ok) {
-            throw new Error(`Google News RSS failed (${res.status})`);
-        }
-
-        const xml = await res.text();
-        const items = Array.from(xml.matchAll(/<item>([\s\S]*?)<\/item>/gi));
-        const candidates: ScrapedPostCandidate[] = [];
-
-        for (const match of items.slice(0, 15)) {
-            const itemXml = match[1];
-            const rawTitle = itemXml.match(/<title>([\s\S]*?)<\/title>/i)?.[1] || '';
-            const rawLink = itemXml.match(/<link>([\s\S]*?)<\/link>/i)?.[1] || '';
-            const rawPubDate = itemXml.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1] || '';
-
-            const title = decodeXmlEntities(rawTitle).replace(/\s+-\s+[^-]+$/, '').trim();
-            if (!title || title.length < 20) continue;
-
-            const postedAt = rawPubDate ? new Date(rawPubDate.trim()) : undefined;
-            const validDate = postedAt && !Number.isNaN(postedAt.getTime()) ? postedAt : undefined;
-            const externalId = `rss:${normalizedHandle}:${hashText(title)}`;
-
-            candidates.push({
-                externalId,
-                text: title.slice(0, 4000),
-                postUrl: decodeXmlEntities(rawLink) || `https://x.com/${normalizedHandle}`,
-                postedAt: validDate,
-                rawMarkdown: title,
-            });
-        }
-
-        return candidates;
     } finally {
         clearTimeout(timeout);
     }

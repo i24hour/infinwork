@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 import Politician from '@/models/Politician';
-import { sortPoliticiansForLeaderboard } from '@/lib/rank-politician/score';
+import {
+    RANK_POLITICIAN_SCORE_WINDOW_DAYS,
+    sortPoliticiansForLeaderboard,
+} from '@/lib/rank-politician/score';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,7 +17,7 @@ export async function GET(request: NextRequest) {
         const q = searchParams.get('q')?.trim();
         const scrapeStatus = searchParams.get('scrapeStatus')?.trim()?.toLowerCase();
         const sortByParam = searchParams.get('sortBy');
-        const sortBy = sortByParam === 'onPortfolioPct' ? 'onPortfolioPct' : 'netScore';
+        const sortBy = sortByParam === 'netScore' ? 'netScore' : 'onPortfolioPct';
 
         const filter: Record<string, unknown> = { isActive: true };
         if (party && party.toLowerCase() !== 'all') {
@@ -90,6 +93,9 @@ export async function GET(request: NextRequest) {
                 lastScrapedAt: p.lastScrapedAt || null,
                 lastScrapeStatus: p.lastScrapeStatus || 'never',
                 lastScrapeError: p.lastScrapeError || null,
+                lastScrapePostCount:
+                    typeof p.lastScrapePostCount === 'number' ? p.lastScrapePostCount : null,
+                lastScrapeProvider: p.lastScrapeProvider || null,
                 stats: {
                     netScore: Number(p.stats?.netScore ?? 0),
                     onPortfolioPct: Number(p.stats?.onPortfolioPct ?? 0),
@@ -109,6 +115,7 @@ export async function GET(request: NextRequest) {
                 scrapePartial,
                 neverScraped,
                 avgOnPortfolioPct,
+                windowDays: RANK_POLITICIAN_SCORE_WINDOW_DAYS,
             },
         });
     } catch (error: any) {

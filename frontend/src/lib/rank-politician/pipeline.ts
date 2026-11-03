@@ -4,6 +4,7 @@ import PoliticianPost from '@/models/PoliticianPost';
 import {
     aggregatePoliticianStats,
     classifyPost,
+    RANK_POLITICIAN_SCORE_WINDOW_DAYS,
     type ClassifiedPost,
     type PostCategory,
 } from '@/lib/rank-politician/score';
@@ -21,6 +22,8 @@ import {
 
 // Cabinet-only set (~30). Keep batches small so each cron run finishes well inside serverless limits.
 export const RANK_POLITICIAN_BATCH_SIZE = 8;
+/** Keep enough history for the detail page, then prune. */
+export const RANK_POLITICIAN_POST_RETENTION_DAYS = 180;
 /** Skip re-scrape if last success was fresher than this. */
 export const SCRAPE_COOLDOWN_HOURS = 20;
 /** Do not use Firecrawl unless at least this many Firecrawl credits remain. */
@@ -81,7 +84,7 @@ function isCreditErrorMessage(message?: string | null) {
 
 function isInErrorBackoff(politician: { lastScrapeStatus?: string; lastScrapedAt?: Date | string | null; lastScrapeError?: string | null }) {
     if (politician.lastScrapeStatus !== 'error' || !politician.lastScrapedAt) return false;
-    // Previous Firecrawl/credit errors should be retried immediately now that Jina Reader + RSS are enabled.
+    // Previous Firecrawl/credit errors should be retried immediately now that Jina Reader is enabled.
     if (isCreditErrorMessage(politician.lastScrapeError)) return false;
     const ageMs = Date.now() - new Date(politician.lastScrapedAt).getTime();
     return ageMs < ERROR_RETRY_HOURS * 60 * 60 * 1000;
@@ -108,11 +111,24 @@ export interface RankPoliticianRunResult {
     successCount: number;
     errorCount: number;
     skippedCount: number;
+    /** Posts older than the retention window removed after this run. */
+    prunedPosts: number;
     results: PoliticianScrapeSummary[];
 }
 
 async function recomputePoliticianStats(politicianId: string) {
-    const posts = await PoliticianPost.find({ politicianId })
+    const windowStart = new Date(
+        Date.now() - RANK_POLITICIAN_SCORE_WINDOW_DAYS * 24 * 60 * 60 * 1000
+    );
+
+    const posts = await PoliticianPost.find({
+        politicianId,
+        $or: [
+            { postedAt: { $gte: windowStart } },
+            { postedAt: { $exists: false }, createdAt: { $gte: windowStart } },
+            { postedAt: null, createdAt: { $gte: windowStart } },
+        ],
+    })
         .select('category score postUrl')
         .lean();
 
@@ -149,6 +165,20 @@ async function recomputePoliticianStats(politicianId: string) {
     await Politician.findByIdAndUpdate(politicianId, { $set: update });
 
     return stats;
+}
+
+export async function pruneOldPoliticianPosts(
+    retentionDays: number = RANK_POLITICIAN_POST_RETENTION_DAYS
+): Promise<number> {
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+    const result = await PoliticianPost.deleteMany({
+        $or: [
+            { postedAt: { $lt: cutoff } },
+            { postedAt: { $exists: false }, createdAt: { $lt: cutoff } },
+            { postedAt: null, createdAt: { $lt: cutoff } },
+        ],
+    });
+    return result.deletedCount || 0;
 }
 
 async function classifyCandidate(
@@ -224,7 +254,9 @@ async function upsertScoredPosts(
  * Multi-provider fetch chain:
  * 1. Jina Reader (`r.jina.ai/https://x.com/<handle>`) — free, no credits required.
  * 2. Firecrawl — used only if Jina returned 0 posts AND Firecrawl is configured with available credits.
- * 3. Google News RSS — 100% free fallback if X blocks headless browsers for a handle.
+ *
+ * There is deliberately no news/RSS fallback: those headlines are not authored
+ * posts and must never be scored as if the politician wrote them.
  */
 async function fetchPoliticianCandidatesWithFallback(
     politician: IPolitician & { _id: any },
@@ -232,20 +264,29 @@ async function fetchPoliticianCandidatesWithFallback(
 ): Promise<{ candidates: ScrapedPostCandidate[]; provider: ScrapeProviderName }> {
     const errors: string[] = [];
 
-    // Tier 1: Jina Reader (free, zero credits)
-    try {
-        const jinaScraped = await scrapeXProfileWithJina(politician.xProfileUrl);
-        const jinaCandidates = parsePostsFromFirecrawl(
-            politician.xHandle,
-            jinaScraped.markdown,
-            jinaScraped.links
-        );
-        if (jinaCandidates.length > 0) {
-            return { candidates: jinaCandidates, provider: 'jina' };
+    // Tier 1: Jina Reader (free, zero credits). Retry once on a
+    // network/HTTP failure; a valid response with 0 posts is not retried
+    // because the page itself did not contain status posts.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+            const jinaScraped = await scrapeXProfileWithJina(politician.xProfileUrl);
+            const jinaCandidates = parsePostsFromFirecrawl(
+                politician.xHandle,
+                jinaScraped.markdown,
+                jinaScraped.links
+            );
+            if (jinaCandidates.length > 0) {
+                return { candidates: jinaCandidates, provider: 'jina' };
+            }
+            errors.push('Jina returned 0 posts');
+            break;
+        } catch (err: any) {
+            if (attempt === 1) {
+                await new Promise((resolve) => setTimeout(resolve, 1500));
+                continue;
+            }
+            errors.push(`Jina: ${err?.message || 'failed'}`);
         }
-        errors.push('Jina returned 0 posts');
-    } catch (err: any) {
-        errors.push(`Jina: ${err?.message || 'failed'}`);
     }
 
     // Tier 2: Firecrawl (optional if configured and allowed)
@@ -299,6 +340,8 @@ export async function scrapeAndScorePolitician(
                     lastScrapedAt: new Date(),
                     lastScrapeStatus: 'partial',
                     lastScrapeError: 'No posts parsed from any provider',
+                    lastScrapePostCount: 0,
+                    lastScrapeProvider: provider,
                 },
             });
             summary.status = 'error';
@@ -317,6 +360,8 @@ export async function scrapeAndScorePolitician(
                     lastScrapedAt: new Date(),
                     lastScrapeStatus: 'error',
                     lastScrapeError: message,
+                    lastScrapePostCount: 0,
+                    lastScrapeProvider: provider,
                 },
             });
             summary.status = 'error';
@@ -330,6 +375,8 @@ export async function scrapeAndScorePolitician(
             $set: {
                 lastScrapedAt: new Date(),
                 lastScrapeStatus: 'success',
+                lastScrapePostCount: upsert.upserted,
+                lastScrapeProvider: provider,
             },
             $unset: { lastScrapeError: 1 },
         });
@@ -342,6 +389,7 @@ export async function scrapeAndScorePolitician(
                 lastScrapedAt: new Date(),
                 lastScrapeStatus: 'error',
                 lastScrapeError: message.slice(0, 500),
+                lastScrapePostCount: 0,
             },
         });
         summary.status = 'error';
@@ -364,7 +412,7 @@ export async function runRankPoliticianScrapeBatch(
     const force = Boolean(options.force);
 
     // Check optional Firecrawl credits only to decide if Tier-2 Firecrawl fallback can be used.
-    // Even if Firecrawl is unconfigured or has 0 credits, Jina Reader + Google News RSS run for free.
+    // Even if Firecrawl is unconfigured or has 0 credits, Jina Reader runs for free.
     const creditUsage = firecrawlConfigured ? await getFirecrawlCreditUsage() : null;
     const creditsRemaining =
         creditUsage && Number.isFinite(creditUsage.remainingCredits)
@@ -409,6 +457,13 @@ export async function runRankPoliticianScrapeBatch(
         }
     );
 
+    let prunedPosts = 0;
+    try {
+        prunedPosts = await pruneOldPoliticianPosts();
+    } catch (error: any) {
+        console.error('[rank-politician] post pruning failed:', error?.message || error);
+    }
+
     return {
         ranAt: new Date().toISOString(),
         firecrawlConfigured,
@@ -421,6 +476,7 @@ export async function runRankPoliticianScrapeBatch(
         skippedCount:
             results.filter((r) => r.status === 'skipped').length +
             Math.max(0, candidates.length - politicians.length),
+        prunedPosts,
         results,
     };
 }

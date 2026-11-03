@@ -12,6 +12,7 @@ import {
     scrapeStatusClass,
     scrapeStatusLabel,
 } from '@/lib/rank-politician/ui';
+import { RANK_POLITICIAN_SCORE_WINDOW_DAYS } from '@/lib/rank-politician/score';
 import {
     fetchWithCache,
     getCachedData,
@@ -56,6 +57,8 @@ interface PoliticianRow {
     lastScrapedAt: string | null;
     lastScrapeStatus: string;
     lastScrapeError?: string | null;
+    lastScrapePostCount?: number | null;
+    lastScrapeProvider?: string | null;
     stats: {
         netScore: number;
         onPortfolioPct: number;
@@ -73,6 +76,7 @@ interface LeaderboardMeta {
     scrapeError: number;
     neverScraped: number;
     avgOnPortfolioPct: number;
+    windowDays?: number;
 }
 
 type SortBy = 'onPortfolioPct' | 'netScore';
@@ -82,7 +86,7 @@ export default function RankPoliticianPage() {
     const isLightTheme = useIsLightTheme();
     const { data: session, status: authStatus } = useSession();
 
-    const defaultCacheKey = '/api/rank-politician?sortBy=netScore';
+    const defaultCacheKey = '/api/rank-politician?sortBy=onPortfolioPct';
     const initialCached = getCachedData<{
         politicians?: PoliticianRow[];
         parties?: string[];
@@ -100,7 +104,7 @@ export default function RankPoliticianPage() {
     const [parties, setParties] = useState<string[]>(() => initialCached?.parties || []);
     const [party, setParty] = useState('all');
     const [scrapeStatus, setScrapeStatus] = useState<ScrapeFilter>('all');
-    const [sortBy, setSortBy] = useState<SortBy>('netScore');
+    const [sortBy, setSortBy] = useState<SortBy>('onPortfolioPct');
     const [searchInput, setSearchInput] = useState('');
     const [q, setQ] = useState('');
     const [loading, setLoading] = useState<boolean>(() => !initialCached);
@@ -199,12 +203,12 @@ export default function RankPoliticianPage() {
         fetchLeaderboard();
     }, [fetchLeaderboard, party, q, scrapeStatus, sortBy]);
 
-    const hasActiveFilters = party !== 'all' || scrapeStatus !== 'all' || Boolean(q) || sortBy !== 'netScore';
+    const hasActiveFilters = party !== 'all' || scrapeStatus !== 'all' || Boolean(q) || sortBy !== 'onPortfolioPct';
 
     const clearFilters = () => {
         setParty('all');
         setScrapeStatus('all');
-        setSortBy('netScore');
+        setSortBy('onPortfolioPct');
         setSearchInput('');
         setQ('');
     };
@@ -276,7 +280,8 @@ export default function RankPoliticianPage() {
                             </h1>
                             <p className={muted}>
                                 Union Cabinet ministers only (incl. PM), ranked by how focused their
-                                public posts are on assigned departments. Ranked by net score.
+                                public posts are on assigned departments over the last{' '}
+                                {RANK_POLITICIAN_SCORE_WINDOW_DAYS} days.
                             </p>
                         </div>
                         <div className="flex flex-wrap gap-2">
@@ -378,8 +383,8 @@ export default function RankPoliticianPage() {
                                 onChange={(e) => setSortBy(e.target.value as SortBy)}
                                 className="rounded-xl bg-black border border-white/10 px-4 py-2.5 text-sm text-white focus:outline-none focus:border-white/30"
                             >
+                                <option value="onPortfolioPct">Sort: % on-portfolio (default)</option>
                                 <option value="netScore">Sort: net score</option>
-                                <option value="onPortfolioPct">Sort: % on-portfolio</option>
                             </select>
                         </div>
                         {hasActiveFilters && (
@@ -489,6 +494,9 @@ export default function RankPoliticianPage() {
                                                             {' · '}@{politician.xHandle}
                                                             {' · '}
                                                             {formatRelativeTime(politician.lastScrapedAt)}
+                                                            {typeof politician.lastScrapePostCount === 'number'
+                                                                ? ` · ${politician.lastScrapePostCount} posts last scrape`
+                                                                : ''}
                                                         </p>
                                                     </div>
                                                 </div>

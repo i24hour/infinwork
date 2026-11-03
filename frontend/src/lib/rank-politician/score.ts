@@ -1,3 +1,6 @@
+/** Only posts inside this rolling window affect rankings. */
+export const RANK_POLITICIAN_SCORE_WINDOW_DAYS = 90;
+
 export type PostCategory =
     | 'on_portfolio'
     | 'related'
@@ -236,7 +239,7 @@ export function sortPoliticiansForLeaderboard<
     T extends { stats?: { onPortfolioPct?: number; netScore?: number; postCount?: number } }
 >(
     politicians: T[],
-    sortBy: 'onPortfolioPct' | 'netScore' = 'netScore'
+    sortBy: 'onPortfolioPct' | 'netScore' = 'onPortfolioPct'
 ): T[] {
     return [...politicians].sort((a, b) => {
         const aPct = a.stats?.onPortfolioPct ?? 0;
@@ -245,6 +248,13 @@ export function sortPoliticiansForLeaderboard<
         const bNet = b.stats?.netScore ?? 0;
         const aPosts = a.stats?.postCount ?? 0;
         const bPosts = b.stats?.postCount ?? 0;
+
+        // Profiles with no scored posts in the window have no evidence to
+        // rank above profiles that do. Keep them at the bottom regardless of
+        // whether the user sorts by percentage or raw net score.
+        if ((aPosts > 0) !== (bPosts > 0)) {
+            return aPosts > 0 ? -1 : 1;
+        }
 
         if (sortBy === 'netScore') {
             if (bNet !== aNet) return bNet - aNet;

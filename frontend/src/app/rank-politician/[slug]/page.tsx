@@ -17,6 +17,7 @@ import {
     scrapeStatusClass,
     scrapeStatusLabel,
 } from '@/lib/rank-politician/ui';
+import { RANK_POLITICIAN_SCORE_WINDOW_DAYS } from '@/lib/rank-politician/score';
 import {
     fetchWithCache,
     getCachedData,
@@ -54,6 +55,9 @@ interface PoliticianDetail {
     lastScrapeStatus: string;
     lastScrapedAt: string | null;
     lastScrapeError: string | null;
+    lastScrapePostCount?: number | null;
+    lastScrapeProvider?: string | null;
+    windowDays?: number;
     stats: {
         netScore: number;
         onPortfolioPct: number;
@@ -263,6 +267,12 @@ export default function RankPoliticianDetailPage() {
                                         </a>
                                         <span className={muted}>
                                             Last scrape: {formatRelativeTime(politician.lastScrapedAt)}
+                                            {typeof politician.lastScrapePostCount === 'number'
+                                                ? ` · ${politician.lastScrapePostCount} posts`
+                                                : ''}
+                                        </span>
+                                        <span className={muted}>
+                                            {politician.windowDays ?? RANK_POLITICIAN_SCORE_WINDOW_DAYS}-day scoring window
                                         </span>
                                     </div>
                                 </div>
@@ -318,7 +328,9 @@ export default function RankPoliticianDetailPage() {
                                     </p>
                                 </div>
                                 <div className={`${panel} p-4`}>
-                                    <p className={`text-xs uppercase tracking-wider mb-1 ${muted}`}>Posts</p>
+                                    <p className={`text-xs uppercase tracking-wider mb-1 ${muted}`}>
+                                        Posts ({politician.windowDays ?? RANK_POLITICIAN_SCORE_WINDOW_DAYS}d)
+                                    </p>
                                     <p className={`text-2xl font-bold ${heading}`}>
                                         {politician.stats.postCount}
                                     </p>
@@ -335,7 +347,9 @@ export default function RankPoliticianDetailPage() {
                                 <p className={`text-sm font-medium ${heading}`}>Category breakdown</p>
                                 {politician.stats.postCount === 0 ? (
                                     <p className={`text-sm ${muted}`}>
-                                        No scored posts yet. Scrape this profile to populate categories.
+                                        No scored posts in the last{' '}
+                                        {politician.windowDays ?? RANK_POLITICIAN_SCORE_WINDOW_DAYS} days.
+                                        Scrape this profile to populate categories.
                                     </p>
                                 ) : (
                                     <div className="space-y-3">
@@ -390,7 +404,10 @@ export default function RankPoliticianDetailPage() {
 
                             <div className="space-y-3">
                                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                                    <h2 className={`text-xl font-semibold ${heading}`}>Scored posts</h2>
+                                    <h2 className={`text-xl font-semibold ${heading}`}>
+                                        Scored posts · last{' '}
+                                        {politician.windowDays ?? RANK_POLITICIAN_SCORE_WINDOW_DAYS} days
+                                    </h2>
                                     <select
                                         value={categoryFilter}
                                         onChange={(e) => setCategoryFilter(e.target.value as CategoryFilter)}
@@ -409,7 +426,9 @@ export default function RankPoliticianDetailPage() {
                                 {posts.length === 0 ? (
                                     <div className={`${panel} p-6 space-y-3`}>
                                         <p className={muted}>
-                                            No posts yet. Wait for the daily cron, or scrape this profile if you&apos;re an admin.
+                                            No posts from the last{' '}
+                                            {politician.windowDays ?? RANK_POLITICIAN_SCORE_WINDOW_DAYS} days.
+                                            Wait for the cron, or scrape this profile if you&apos;re an admin.
                                         </p>
                                         {isAdmin && (
                                             <LiquidButton

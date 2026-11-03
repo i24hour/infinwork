@@ -31,6 +31,10 @@ export interface IPolitician {
     lastScrapedAt?: Date;
     lastScrapeStatus: PoliticianScrapeStatus;
     lastScrapeError?: string;
+    /** Number of posts upserted by the most recent scrape attempt. */
+    lastScrapePostCount?: number;
+    /** Provider used by the most recent successful attempt (admin/debug only). */
+    lastScrapeProvider?: string;
     stats: IPoliticianStats;
     createdAt?: Date;
     updatedAt?: Date;
@@ -85,6 +89,8 @@ const PoliticianSchema = new mongoose.Schema<IPolitician>(
             default: 'never',
         },
         lastScrapeError: { type: String },
+        lastScrapePostCount: { type: Number, default: 0 },
+        lastScrapeProvider: { type: String },
         stats: {
             type: PoliticianStatsSchema,
             default: () => ({

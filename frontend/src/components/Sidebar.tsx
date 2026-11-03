@@ -19,7 +19,7 @@ const navItems: Array<{ href: string; label: string; prefetchEndpoints?: string[
     { href: '/profile', label: 'Profile', prefetchEndpoints: ['/api/profile'] },
     { href: '/itime', label: 'iTime', prefetchEndpoints: ['/api/itime', '/api/user/settings'] },
     { href: '/workers', label: 'WOrKers', prefetchEndpoints: ['/api/workers'] },
-    { href: '/rank-politician', label: 'Rank Politician', prefetchEndpoints: ['/api/rank-politician?sortBy=netScore'] },
+    { href: '/rank-politician', label: 'Rank Politician', prefetchEndpoints: ['/api/rank-politician?sortBy=onPortfolioPct'] },
     { href: '/ideas', label: 'Ideas', prefetchEndpoints: ['/api/ideas'] },
     { href: '/ichain', label: 'Chain', prefetchEndpoints: ['/api/ichain'] },
     { href: '/sf-tracker', label: 'SF Tracker', prefetchEndpoints: ['/api/sf-tracker'] },

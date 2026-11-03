@@ -70,19 +70,22 @@ Legacy hiring/candidate APIs still exist in code, but the current product focus 
 - SFTracker: target + success/failure + failure reason
 
 ### `Politician`, `PoliticianPost` (Rank Politician)
-- Politician: name/slug, party, portfolio, `portfolioTopics[]`, X handle/url, scrape status, cached `stats`
+- Politician: name/slug, party, portfolio, `portfolioTopics[]`, X handle/url, scrape status, last scrape post count, cached `stats`
 - PoliticianPost: text, externalId, category, score, scoreReason
 - Seed list: `frontend/src/lib/rank-politician/seed.ts` (PM + 30 Cabinet ministers = 31)
 - Score helpers: `frontend/src/lib/rank-politician/score.ts`
   - Categories: `on_portfolio(+2)`, `related(0)`, `off_topic(-1)`, `attack(-2)`, `personal(-1)`, `unknown(0)`
   - `onPortfolioPct` denominator includes `unknown` posts
-  - Leaderboard default sort: net score, then % on-portfolio
+  - Rolling scoring window: **90 days** (`RANK_POLITICIAN_SCORE_WINDOW_DAYS`)
+  - Leaderboard default sort: **% on-portfolio**, then net score, then post count
 - Scrape pipeline: `frontend/src/lib/rank-politician/scrape.ts` + `pipeline.ts`
-  - Jina Reader primary (free), Firecrawl fallback (paid, credit-guarded)
+  - Jina Reader primary (free; one retry on network/HTTP failure), Firecrawl fallback (paid, credit-guarded)
   - **Only** `x.com/{handle}/status/{id}` posts are accepted. Profile chrome and Google News headlines are never scored or displayed.
-  - Classify + upsert posts, recompute politician `stats` from status posts only
+  - Classify + upsert posts, recompute politician `stats` from status posts inside the 90-day window
+  - Posts older than **180 days** are pruned (`RANK_POLITICIAN_POST_RETENTION_DAYS`)
   - Batch size default: 8, 20h success cooldown, 6h error backoff
   - Re-running Seed updates handles; a changed handle purges posts scraped under the old handle
+  - Cron recomputes all stats before scraping so window changes apply immediately
 
 ---
 
@@ -301,8 +304,8 @@ Modes:
 - Do **not** hardcode admin emails in source
 
 ### Rank Politician
-- `GET /api/rank-politician` (leaderboard; query: `party`, `q`, `scrapeStatus`, `sortBy=onPortfolioPct|netScore`; includes `meta` scrape health summary)
-- `GET /api/rank-politician/[slug]` (detail + scored posts)
+- `GET /api/rank-politician` (leaderboard; query: `party`, `q`, `scrapeStatus`, `sortBy=onPortfolioPct|netScore`; default `onPortfolioPct`; includes `meta` scrape health summary + `windowDays`)
+- `GET /api/rank-politician/[slug]` (detail + scored posts from the last 90 days)
 - `POST /api/rank-politician/seed` (admin-only upsert of starter politicians)
 - `POST /api/rank-politician/scrape` (admin-only manual batch; body: `{ limit?, slugs?, force? }`; explicit slugs force a re-scrape)
 - `GET /api/cron/rank-politician` (scheduled scrape+score batch; auth via `CRON_SECRET`)
@@ -312,7 +315,7 @@ Modes:
 - External cron (preferred frequency): GitHub Actions `.github/workflows/rank-politician-cron.yml` every 4 hours
   - Secrets: `CRON_SECRET`, optional `RANK_POLITICIAN_CRON_URL`
   - Setup notes: `.github/RANK_POLITICIAN_CRON.md`
-- Batch: 8 politicians/run, prioritized `never` → `partial` → `error` → `success`, then oldest `lastScrapedAt`
+- Batch: 8 politicians/run, prioritized `never` → `partial` → `error` → `success`, then oldest `lastScrapedAt`; old posts pruned after each batch
 - Note: hitting the cron URL in a browser returns 401 unless `Authorization: Bearer $CRON_SECRET` is sent (Vercel/GitHub Actions add this automatically)
 
 ### Maintenance
