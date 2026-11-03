@@ -10,6 +10,8 @@ import { fetchWithCache, getCachedData, setCachedData } from '@/lib/client-cache
 interface SettingsResponse {
     username?: string;
     totalScore?: number;
+    baseScore?: number;
+    idlePenalty?: number;
     points?: number;
     chainPoints?: number;
     githubUsername?: string | null;
@@ -26,6 +28,8 @@ export default function SettingsPage() {
     const initialCached = getCachedData<SettingsResponse>('/api/user/settings');
     const [username, setUsername] = useState<string>(() => initialCached?.username || '');
     const [totalScore, setTotalScore] = useState<number>(() => initialCached?.totalScore || 0);
+    const [baseScore, setBaseScore] = useState<number>(() => initialCached?.baseScore || 0);
+    const [idlePenalty, setIdlePenalty] = useState<number>(() => initialCached?.idlePenalty || 0);
     const [githubPoints, setGithubPoints] = useState<number>(() => initialCached?.points || 0);
     const [chainPoints, setChainPoints] = useState<number>(() => initialCached?.chainPoints || 0);
     const [githubUsername, setGithubUsername] = useState<string | null>(() => initialCached?.githubUsername || null);
@@ -70,6 +74,12 @@ export default function SettingsPage() {
             if (data.totalScore !== undefined) {
                 setTotalScore(data.totalScore);
             }
+            if (data.baseScore !== undefined) {
+                setBaseScore(data.baseScore);
+            }
+            if (data.idlePenalty !== undefined) {
+                setIdlePenalty(data.idlePenalty);
+            }
             if (data.points !== undefined) {
                 setGithubPoints(data.points);
             }
@@ -98,6 +108,8 @@ export default function SettingsPage() {
         if (status === 'unauthenticated') {
             setUsername('');
             setTotalScore(0);
+            setBaseScore(0);
+            setIdlePenalty(0);
             setGithubPoints(0);
             setChainPoints(0);
             setGithubUsername(null);
@@ -312,7 +324,10 @@ export default function SettingsPage() {
                                             {totalScore.toFixed(2)} <span className="text-sm text-zinc-500 font-normal">pts</span>
                                         </div>
                                         <p className="text-xs text-zinc-500 mt-2">
-                                            GitHub bonus: {githubPoints} pts | Chain bonus: {chainPoints} pts
+                                            GitHub bonus: {githubPoints.toLocaleString()} pts | Chain bonus: {chainPoints.toLocaleString()} pts
+                                        </p>
+                                        <p className="text-xs text-zinc-500 mt-1">
+                                            Task score after idle: {baseScore.toFixed(2)} · Idle penalty: −{idlePenalty.toFixed(2)}
                                         </p>
                                     </div>
                                 </div>
