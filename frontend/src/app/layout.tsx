@@ -25,7 +25,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://infinwork.app"),
+  metadataBase: new URL("https://www.infinwork.app"),
   title: {
     default: "Infinwork — AI Workspace for Builders",
     template: "%s | Infinwork"
@@ -69,7 +69,7 @@ export const metadata: Metadata = {
     title: "Infinwork — AI Workspace for Builders",
     description:
       "Turn your work into measurable progress using targets, chains, and performance analytics.",
-    url: "https://infinwork.app",
+    url: "https://www.infinwork.app",
     siteName: "Infinwork",
     type: "website"
   },
@@ -135,7 +135,7 @@ export default function RootLayout({
               name: "Infinwork",
               applicationCategory: "ProductivityApplication",
               operatingSystem: "Web",
-              url: "https://infinwork.app",
+              url: "https://www.infinwork.app",
               description: "An AI workspace that helps users set targets, build chains, track time, and measure performance."
             })
           }}
