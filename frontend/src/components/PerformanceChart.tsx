@@ -242,8 +242,8 @@ export function PerformanceChart({
     chainPointsHistory = null
 }: PerformanceChartProps) {
     const [chartType, setChartType] = useState<ChartType>('daily');
-    const [interval, setIntervalVal] = useState<CandleInterval>('15m');
-    const [range, setRange] = useState<ChartRange>('30d');
+    const [interval, setIntervalVal] = useState<CandleInterval>('1d');
+    const [range, setRange] = useState<ChartRange>('1y');
     const [isLightTheme, setIsLightTheme] = useState<boolean>(() => getInitialIsLightTheme());
     const [referenceNow, setReferenceNow] = useState(() => Date.now());
     const chartContainerRef = useRef<HTMLDivElement>(null);
