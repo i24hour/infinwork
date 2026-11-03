@@ -14,6 +14,7 @@ interface SettingsResponse {
     chainPoints?: number;
     githubUsername?: string | null;
     githubConnectedAt?: string | null;
+    githubCommitsTotal?: number;
     githubSyncError?: string | null;
     githubSyncRetryAt?: string | null;
     githubOAuthConfigured?: boolean;
@@ -29,6 +30,7 @@ export default function SettingsPage() {
     const [chainPoints, setChainPoints] = useState<number>(() => initialCached?.chainPoints || 0);
     const [githubUsername, setGithubUsername] = useState<string | null>(() => initialCached?.githubUsername || null);
     const [githubConnectedAt, setGithubConnectedAt] = useState<string | null>(() => initialCached?.githubConnectedAt || null);
+    const [githubCommitsTotal, setGithubCommitsTotal] = useState<number>(() => initialCached?.githubCommitsTotal || 0);
     const [loading, setLoading] = useState<boolean>(() => !initialCached);
     const [saving, setSaving] = useState(false);
     const [syncing, setSyncing] = useState(false);
@@ -80,6 +82,7 @@ export default function SettingsPage() {
                 setGithubUsername(null);
             }
             setGithubConnectedAt(data.githubConnectedAt || null);
+            setGithubCommitsTotal(data.githubCommitsTotal || 0);
             setLastGithubSyncAt(data.lastGithubSyncAt || null);
             setGithubSyncError(data.githubSyncError || null);
             setGithubSyncRetryAt(data.githubSyncRetryAt || null);
@@ -166,6 +169,7 @@ export default function SettingsPage() {
             if (res.ok) {
                 setGithubUsername(null);
                 setGithubConnectedAt(null);
+                setGithubCommitsTotal(0);
                 setLastGithubSyncAt(null);
                 setGithubSyncError(null);
                 setGithubSyncRetryAt(null);
@@ -328,6 +332,11 @@ export default function SettingsPage() {
                                                 ? `Connected as @${githubUsername}` 
                                                 : 'Connect GitHub to earn +10 points for every commit.'}
                                         </p>
+                                        {githubUsername && (
+                                            <p className="text-xs text-emerald-400 mt-1">
+                                                {githubCommitsTotal.toLocaleString()} commits synced
+                                            </p>
+                                        )}
                                         {githubUsername && githubConnectedAt && (
                                             <p className="text-xs text-zinc-500 mt-2">
                                                 Points are counted from {new Date(githubConnectedAt).toLocaleString()}; commits before you connected are not included. Private commits appear only if GitHub&apos;s &quot;Include private contributions on my profile&quot; setting is on.

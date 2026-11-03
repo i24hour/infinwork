@@ -57,6 +57,7 @@ export async function GET(request: NextRequest) {
             idlePenalty: scoreBreakdown.idlePenalty,
             githubUsername: user?.githubUsername || null,
             githubConnectedAt: user?.githubConnectedAt || null,
+            githubCommitsTotal: user?.githubCommitsTotal || 0,
             githubSyncError: user?.githubSyncError || null,
             githubSyncRetryAt: user?.githubSyncRetryAt || null,
             githubOAuthConfigured: isGithubOAuthConfigured(),

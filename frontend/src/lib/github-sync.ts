@@ -182,6 +182,68 @@ function buildPointsHistoryFromCommitDays(
         .slice(-2000);
 }
 
+/**
+ * When per-repository commit pagination is truncated, GitHub's contribution
+ * calendar still gives us a daily shape. Distribute the authoritative commit
+ * total across those days proportionally so the daily score chart keeps its
+ * granularity instead of collapsing to two snapshots.
+ */
+function buildPointsHistoryFromCalendar(
+    calendarDays: Array<{ date: string; contributions: number }>,
+    connectionDate: Date,
+    now: Date,
+    authoritativeCommits: number
+): GithubPointsHistoryEntry[] {
+    const pointsByTimestamp = new Map<number, number>();
+    const connectionAt = connectionDate.getTime();
+    if (Number.isFinite(connectionAt)) {
+        pointsByTimestamp.set(connectionAt, 0);
+    }
+
+    const normalizedDays = calendarDays
+        .filter((day) => typeof day.date === 'string')
+        .map((day) => ({
+            date: day.date,
+            contributions: Math.max(0, Math.round(Number(day.contributions || 0))),
+        }))
+        .filter((day) => day.contributions > 0)
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+    const totalWeight = normalizedDays.reduce((sum, day) => sum + day.contributions, 0);
+    const safeCommits = Math.max(0, Math.round(authoritativeCommits));
+
+    if (totalWeight <= 0 || safeCommits <= 0) {
+        return buildPointsHistoryFromSnapshots([], connectionDate, now, authoritativeCommits);
+    }
+
+    let cumulativeWeight = 0;
+    for (const day of normalizedDays) {
+        cumulativeWeight += day.contributions;
+        const dayEnd = getIstDayEndFromGithubDate(day.date);
+        if (!dayEnd) continue;
+
+        const dayEndMs = dayEnd.getTime();
+        if (!Number.isFinite(dayEndMs)) continue;
+
+        const cumulativeCommits = Math.round((cumulativeWeight / totalWeight) * safeCommits);
+        const dayPoints = cumulativeCommits * COMMIT_REWARD_POINTS;
+        const existing = pointsByTimestamp.get(dayEndMs);
+        if (existing === undefined || dayPoints > existing) {
+            pointsByTimestamp.set(dayEndMs, dayPoints);
+        }
+    }
+
+    pointsByTimestamp.set(now.getTime(), safeCommits * COMMIT_REWARD_POINTS);
+
+    return Array.from(pointsByTimestamp.entries())
+        .map(([timestamp, points]) => ({
+            timestamp: new Date(timestamp),
+            points: Math.max(0, Math.round(points)),
+        }))
+        .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+        .slice(-2000);
+}
+
 function buildPointsHistoryFromSnapshots(
     rawExistingHistory: unknown,
     connectionDate: Date,
@@ -369,6 +431,14 @@ export async function syncGithubForUser(
               commitsSinceConnection: contributionsCollection(from: $connectionDate, to: $now) {
                 totalCommitContributions
                 restrictedContributionsCount
+                contributionCalendar {
+                  weeks {
+                    contributionDays {
+                      date
+                      contributionCount
+                    }
+                  }
+                }
                 commitContributionsByRepository(maxRepositories: 100) {
                   contributions(first: 100) {
                     pageInfo {
@@ -411,6 +481,7 @@ export async function syncGithubForUser(
         }
 
         const commitDayMap = new Map<string, number>();
+        const calendarDayMap = new Map<string, number>();
         let contributionNodesCommitTotal = 0;
         let hasPaginationTruncation = false;
         let authoritativeCommitTotal = 0;
@@ -479,6 +550,20 @@ export async function syncGithubForUser(
             }
 
             authoritativeCommitTotal += Math.max(0, Math.round(Number(commitsCollection.totalCommitContributions || 0)));
+
+            const calendarWeeks = Array.isArray(commitsCollection.contributionCalendar?.weeks)
+                ? commitsCollection.contributionCalendar.weeks
+                : [];
+            for (const week of calendarWeeks) {
+                const days = Array.isArray(week?.contributionDays) ? week.contributionDays : [];
+                for (const day of days) {
+                    if (typeof day?.date !== 'string') continue;
+                    const count = Math.max(0, Math.round(Number(day.contributionCount || 0)));
+                    if (count <= 0) continue;
+                    calendarDayMap.set(day.date, (calendarDayMap.get(day.date) || 0) + count);
+                }
+            }
+
             const repoCommitContributions = Array.isArray(commitsCollection.commitContributionsByRepository)
                 ? commitsCollection.commitContributionsByRepository
                 : [];
@@ -513,6 +598,13 @@ export async function syncGithubForUser(
             }))
             .sort((a, b) => a.date.localeCompare(b.date));
 
+        const calendarDays = Array.from(calendarDayMap.entries())
+            .map(([date, contributions]) => ({
+                date,
+                contributions: Math.max(0, Math.round(contributions)),
+            }))
+            .sort((a, b) => a.date.localeCompare(b.date));
+
         // Keep earned points monotonic for a connection. A repo deletion or a
         // temporary GitHub recount must not silently wipe a user's points.
         const commitsSinceConnection = Math.max(previousCommitCheckpoint, authoritativeCommitTotal);
@@ -529,12 +621,19 @@ export async function syncGithubForUser(
                 now,
                 commitsSinceConnection
             )
-            : buildPointsHistoryFromSnapshots(
-                lockedUser.githubPointsHistory,
-                connectionDate,
-                now,
-                commitsSinceConnection
-            );
+            : calendarDays.length > 0
+                ? buildPointsHistoryFromCalendar(
+                    calendarDays,
+                    connectionDate,
+                    now,
+                    commitsSinceConnection
+                )
+                : buildPointsHistoryFromSnapshots(
+                    lockedUser.githubPointsHistory,
+                    connectionDate,
+                    now,
+                    commitsSinceConnection
+                );
 
         if (lockedUser.points !== authoritativeGithubPoints) {
             lockedUser.points = authoritativeGithubPoints;
