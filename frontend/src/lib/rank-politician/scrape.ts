@@ -6,7 +6,7 @@ export interface ScrapedPostCandidate {
     rawMarkdown?: string;
 }
 
-export type ScrapeProviderName = 'jina' | 'firecrawl';
+export type ScrapeProviderName = 'jina' | 'firecrawl' | 'x-syndication';
 
 export interface FirecrawlScrapeResult {
     markdown: string;
@@ -21,6 +21,7 @@ const STATUS_URL_RE =
 const FIRECRAWL_API_URL = 'https://api.firecrawl.dev/v2/scrape';
 const FIRECRAWL_CREDITS_URL = 'https://api.firecrawl.dev/v2/team/credit-usage';
 const JINA_READER_BASE_URL = 'https://r.jina.ai/';
+const X_SYNDICATION_BASE_URL = 'https://syndication.twitter.com/srv/timeline-profile/screen-name/';
 const DEFAULT_TIMEOUT_MS = 45000;
 const TWITTER_EPOCH_MS = BigInt('1288834974657');
 const SNOWFLAKE_SHIFT = BigInt(22);
@@ -415,6 +416,82 @@ export async function scrapeXProfileWithJina(
             links,
             provider: 'jina',
         };
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+/**
+ * Free fallback that reads X's public embedded-timeline data. It returns the
+ * recent authored tweets (not profile chrome or news) and needs no API key.
+ * X can change this endpoint without notice, so it is used only after Jina
+ * fails/returns no status posts.
+ */
+export async function scrapeXProfileWithSyndication(
+    handle: string
+): Promise<ScrapedPostCandidate[]> {
+    const normalizedHandle = handle.replace(/^@/, '').trim();
+    if (!normalizedHandle) return [];
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+
+    try {
+        const response = await fetch(
+            `${X_SYNDICATION_BASE_URL}${encodeURIComponent(normalizedHandle)}`,
+            {
+                headers: {
+                    Accept: 'text/html',
+                    'User-Agent': 'Mozilla/5.0 (compatible; InfinworkBot/1.0)',
+                },
+                cache: 'no-store',
+                signal: controller.signal,
+            }
+        );
+        if (!response.ok) {
+            throw new Error(`X syndication failed (${response.status})`);
+        }
+
+        const html = await response.text();
+        const nextData = html.match(
+            /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/
+        )?.[1];
+        if (!nextData) {
+            throw new Error('X syndication response missing timeline data');
+        }
+
+        const payload = JSON.parse(nextData);
+        const entries = payload?.props?.pageProps?.timeline?.entries;
+        if (!Array.isArray(entries)) {
+            throw new Error('X syndication timeline is empty');
+        }
+
+        const candidates: ScrapedPostCandidate[] = [];
+        const expectedHandle = normalizedHandle.toLowerCase();
+
+        for (const entry of entries) {
+            if (entry?.type !== 'tweet') continue;
+            const tweet = entry?.content?.tweet;
+            const statusId = String(tweet?.id_str || '');
+            if (!/^\d+$/.test(statusId)) continue;
+
+            const author = String(tweet?.user?.screen_name || '').toLowerCase();
+            if (author && author !== expectedHandle) continue;
+
+            const text = String(tweet?.full_text || tweet?.text || '').trim();
+            if (text.length < 16) continue;
+
+            const postedAt = new Date(String(tweet?.created_at || ''));
+            candidates.push({
+                externalId: `x:${expectedHandle}:${statusId}`,
+                text: text.slice(0, 4000),
+                postUrl: `https://x.com/${expectedHandle}/status/${statusId}`,
+                postedAt: Number.isNaN(postedAt.getTime()) ? undefined : postedAt,
+                rawMarkdown: text,
+            });
+        }
+
+        return candidates.slice(0, 40);
     } finally {
         clearTimeout(timeout);
     }

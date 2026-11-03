@@ -16,6 +16,7 @@ import {
     parsePostsFromFirecrawl,
     scrapeXProfileWithFirecrawl,
     scrapeXProfileWithJina,
+    scrapeXProfileWithSyndication,
     type ScrapedPostCandidate,
     type ScrapeProviderName,
 } from '@/lib/rank-politician/scrape';
@@ -253,7 +254,8 @@ async function upsertScoredPosts(
 /**
  * Multi-provider fetch chain:
  * 1. Jina Reader (`r.jina.ai/https://x.com/<handle>`) — free, no credits required.
- * 2. Firecrawl — used only if Jina returned 0 posts AND Firecrawl is configured with available credits.
+ * 2. X public syndication timeline — free fallback for recent authored tweets.
+ * 3. Firecrawl — used only if the free providers returned 0 posts AND Firecrawl is configured with available credits.
  *
  * There is deliberately no news/RSS fallback: those headlines are not authored
  * posts and must never be scored as if the politician wrote them.
@@ -289,7 +291,21 @@ async function fetchPoliticianCandidatesWithFallback(
         }
     }
 
-    // Tier 2: Firecrawl (optional if configured and allowed)
+    // Tier 2: X's public embedded-timeline endpoint. No key, no credits, and
+    // it returns authored tweets rather than news headlines.
+    try {
+        const syndicationCandidates = await scrapeXProfileWithSyndication(
+            politician.xHandle
+        );
+        if (syndicationCandidates.length > 0) {
+            return { candidates: syndicationCandidates, provider: 'x-syndication' };
+        }
+        errors.push('X syndication returned 0 posts');
+    } catch (err: any) {
+        errors.push(`X syndication: ${err?.message || 'failed'}`);
+    }
+
+    // Tier 3: Firecrawl (optional if configured and allowed)
     if (options.allowFirecrawl && process.env.FIRECRAWL_API_KEY) {
         try {
             const fcScraped = await scrapeXProfileWithFirecrawl(politician.xProfileUrl);
