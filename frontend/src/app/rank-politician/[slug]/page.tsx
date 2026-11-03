@@ -6,10 +6,12 @@ import { useParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { Sidebar } from '@/components/Sidebar';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
+import { useToast } from '@/components/ui/toast';
 import {
     categoryClass,
     categoryLabel,
     formatRelativeTime,
+    partyClass,
     publicScoreReason,
     publicScrapeError,
     scrapeStatusClass,
@@ -82,6 +84,7 @@ export default function RankPoliticianDetailPage() {
     const slug = typeof params?.slug === 'string' ? params.slug : '';
     const isLightTheme = useIsLightTheme();
     const { data: session, status: authStatus } = useSession();
+    const { toast } = useToast();
 
     const detailUrl = slug ? `/api/rank-politician/${encodeURIComponent(slug)}` : '';
     const initialCached = detailUrl
@@ -234,8 +237,11 @@ export default function RankPoliticianDetailPage() {
                                         <h1 className={`text-3xl font-bold tracking-tight ${heading}`}>
                                             {politician.name}
                                         </h1>
+                                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${partyClass(politician.party)}`}>
+                                            {politician.party}
+                                        </span>
                                         <span
-                                            className={`text-[10px] uppercase tracking-wide px-2 py-0.5 rounded border ${scrapeStatusClass(politician.lastScrapeStatus)}`}
+                                            className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-wide ${scrapeStatusClass(politician.lastScrapeStatus)}`}
                                         >
                                             {scrapeStatusLabel(politician.lastScrapeStatus)}
                                         </span>
@@ -244,8 +250,7 @@ export default function RankPoliticianDetailPage() {
                                         {politician.portfolio}
                                     </p>
                                     <p className={muted}>
-                                        {politician.party}
-                                        {politician.state ? ` · ${politician.state}` : ''}
+                                        {politician.state || 'India'}
                                     </p>
                                     <div className="flex flex-wrap items-center gap-3 text-sm">
                                         <a
@@ -261,15 +266,27 @@ export default function RankPoliticianDetailPage() {
                                         </span>
                                     </div>
                                 </div>
-                                {isAdmin && (
-                                    <LiquidButton
-                                        className="text-white"
-                                        disabled={scrapeLoading}
-                                        onClick={scrapeThisPolitician}
+                                <div className="flex flex-wrap gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(window.location.href);
+                                            toast({ variant: 'success', title: 'Profile link copied' });
+                                        }}
+                                        className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-zinc-300 transition-colors hover:bg-white/10 hover:text-white"
                                     >
-                                        {scrapeLoading ? 'Scraping…' : 'Scrape this profile'}
-                                    </LiquidButton>
-                                )}
+                                        Copy link
+                                    </button>
+                                    {isAdmin && (
+                                        <LiquidButton
+                                            className="text-white"
+                                            disabled={scrapeLoading}
+                                            onClick={scrapeThisPolitician}
+                                        >
+                                            {scrapeLoading ? 'Scraping…' : 'Scrape this profile'}
+                                        </LiquidButton>
+                                    )}
+                                </div>
                             </div>
 
                             {actionMessage && (

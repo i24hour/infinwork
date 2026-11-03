@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Sidebar } from '@/components/Sidebar';
+import { useToast } from '@/components/ui/toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
@@ -21,6 +23,8 @@ interface Idea {
 export default function IdeasPage() {
     const { data: session, status } = useSession();
     const router = useRouter();
+    const { toast } = useToast();
+    const { confirm: confirmAction } = useConfirm();
     const initialCached = getCachedData<{ ideas?: Idea[] }>('/api/ideas');
     const [ideas, setIdeas] = useState<Idea[]>(() => initialCached?.ideas || []);
     const [loading, setLoading] = useState<boolean>(() => !initialCached);
@@ -31,6 +35,7 @@ export default function IdeasPage() {
     const [saving, setSaving] = useState(false);
     const [togglingId, setTogglingId] = useState<string | null>(null);
     const [filter, setFilter] = useState<'all' | 'mine' | 'public'>('all');
+    const [search, setSearch] = useState('');
     const titleRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -118,21 +123,38 @@ export default function IdeasPage() {
     };
 
     const handleDelete = async (ideaId: string) => {
+        const idea = ideas.find((entry) => entry._id === ideaId);
+        const confirmed = await confirmAction({
+            title: `Delete "${idea?.title || 'this idea'}"?`,
+            description: 'The idea and its discussion will be removed permanently.',
+            confirmLabel: 'Delete idea',
+            destructive: true,
+        });
+        if (!confirmed) return;
+
         setIdeas(prev => {
             const next = prev.filter(i => i._id !== ideaId);
             setCachedData('/api/ideas', { ideas: next });
             return next;
         });
         try {
-            await fetch(`/api/ideas/${ideaId}`, { method: 'DELETE' });
+            const response = await fetch(`/api/ideas/${ideaId}`, { method: 'DELETE' });
+            if (!response.ok) throw new Error('Delete failed');
+            toast({ variant: 'success', title: 'Idea deleted' });
         } catch {
+            toast({ variant: 'error', title: 'Could not delete idea' });
             fetchIdeas();
         }
     };
 
     const filteredIdeas = ideas.filter(idea => {
-        if (filter === 'mine') return Boolean(idea.isOwner);
-        if (filter === 'public') return idea.isPublic;
+        if (filter === 'mine' && !idea.isOwner) return false;
+        if (filter === 'public' && !idea.isPublic) return false;
+        const normalizedSearch = search.trim().toLowerCase();
+        if (normalizedSearch) {
+            const haystack = `${idea.title} ${idea.details} ${idea.username || ''}`.toLowerCase();
+            if (!haystack.includes(normalizedSearch)) return false;
+        }
         return true;
     });
 
@@ -233,20 +255,29 @@ export default function IdeasPage() {
                     </AnimatePresence>
 
                     {/* Filter Tabs */}
-                    <div className="flex gap-2">
-                        {(['all', 'mine', 'public'] as const).map(f => (
-                            <button
-                                key={f}
-                                onClick={() => setFilter(f)}
-                                className={`px-4 py-2 rounded-full text-sm font-medium border transition-all ${
-                                    filter === f
-                                        ? 'bg-white text-black border-white'
-                                        : 'bg-transparent text-zinc-400 border-white/10 hover:border-white/25 hover:text-white'
-                                }`}
-                            >
-                                {f === 'all' ? 'All' : f === 'mine' ? 'My Ideas' : 'Public'}
-                            </button>
-                        ))}
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex gap-2">
+                            {(['all', 'mine', 'public'] as const).map(f => (
+                                <button
+                                    key={f}
+                                    onClick={() => setFilter(f)}
+                                    className={`px-4 py-2 rounded-full text-sm font-medium border transition-all ${
+                                        filter === f
+                                            ? 'bg-white text-black border-white'
+                                            : 'bg-transparent text-zinc-400 border-white/10 hover:border-white/25 hover:text-white'
+                                    }`}
+                                >
+                                    {f === 'all' ? 'All' : f === 'mine' ? 'My Ideas' : 'Public'}
+                                </button>
+                            ))}
+                        </div>
+                        <input
+                            value={search}
+                            onChange={(event) => setSearch(event.target.value)}
+                            placeholder="Search ideas..."
+                            className="app-input max-w-xs py-2 text-sm"
+                            aria-label="Search ideas"
+                        />
                     </div>
 
                     {/* Ideas List */}
@@ -257,9 +288,15 @@ export default function IdeasPage() {
                     ) : filteredIdeas.length === 0 ? (
                         <div className="text-center py-20 bg-black border border-white/10 rounded-2xl">
                             <div className="text-5xl mb-4">💡</div>
-                            <p className="text-zinc-400 text-lg mb-1">No ideas yet</p>
+                            <p className="text-zinc-400 text-lg mb-1">
+                                {search.trim() ? 'No ideas match your search' : 'No ideas yet'}
+                            </p>
                             <p className="text-zinc-600 text-sm">
-                                {session ? 'Hit "+ New Idea" to add your first one.' : 'Sign in to add ideas.'}
+                                {search.trim()
+                                    ? 'Try a different word or clear the search.'
+                                    : session
+                                        ? 'Hit "+ New Idea" to add your first one.'
+                                        : 'Sign in to add ideas.'}
                             </p>
                         </div>
                     ) : (

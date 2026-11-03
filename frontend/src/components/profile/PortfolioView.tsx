@@ -7,6 +7,7 @@ import type { PublicProfile, ProfileProject } from '@/types/profile';
 import type { GithubContributionCalendar } from '@/types/github-contributions';
 import { getContributionLevel } from '@/lib/github-contributions';
 import { sanitizeProjects, isValidHttpUrl } from '@/lib/profile-utils';
+import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
 const emptyProject = (): ProfileProject => ({
@@ -329,6 +330,7 @@ export function PortfolioView({
     // Snapshot that failed to save. Prevents the 2s auto-save effect from
     // retrying the exact same payload forever after a 401/500.
     const failedSnapshotRef = useRef<string | null>(null);
+    const { toast } = useToast();
 
     useEffect(() => {
         if (!editMode || dirty) return;
@@ -485,6 +487,17 @@ export function PortfolioView({
                             {displayProfile.username}.os
                         </span>
                     </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                navigator.clipboard.writeText(`${window.location.origin}/profile/${displayProfile.username}`);
+                                toast({ variant: 'success', title: 'Profile link copied' });
+                            }}
+                            className="folio-mono rounded-full border border-[var(--folio-border)] px-3 py-1.5 text-xs font-medium transition-colors hover:border-[var(--folio-accent)]"
+                        >
+                            Copy link
+                        </button>
                     {editMode ? (
                         <button
                             type="button"
@@ -511,6 +524,7 @@ export function PortfolioView({
                             Let&apos;s Connect ●
                         </a>
                     ) : null}
+                    </div>
                 </div>
 
                 <AnimatePresence>

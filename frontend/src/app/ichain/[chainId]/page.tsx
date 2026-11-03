@@ -3,6 +3,7 @@
 import { useState, useEffect, use } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
+import { useToast } from '@/components/ui/toast';
 import { ChainNode } from '@/components/ichain/ChainNode';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
@@ -20,6 +21,8 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
     const [newMemberIdentifier, setNewMemberIdentifier] = useState('');
     const [isAddingMember, setIsAddingMember] = useState(false);
     const [isLightTheme, setIsLightTheme] = useState(false);
+    const [zoom, setZoom] = useState(1);
+    const { toast } = useToast();
     const fileInputRef = useRef<HTMLInputElement>(null);
     // Ignore poll responses that were started just before a mutation; they can
     // otherwise revert a Start/Stop click for a few seconds.
@@ -56,14 +59,14 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
                 setChain(data.chain);
                 setIsAddMemberModalOpen(false);
                 setNewMemberIdentifier('');
-                alert('Member added successfully!');
+                toast({ variant: 'success', title: 'Member added' });
             } else {
                 const data = await response.json();
-                alert(data.error || 'Failed to add member');
+                toast({ variant: 'error', title: 'Could not add member', description: data.error || 'Please try again.' });
             }
         } catch (error) {
             console.error('Failed to add member:', error);
-            alert('An error occurred while adding member');
+            toast({ variant: 'error', title: 'Could not add member', description: 'Please try again.' });
         } finally {
             setIsAddingMember(false);
         }
@@ -75,7 +78,7 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
 
         // Simple size check (2MB limit for Base64 storage)
         if (file.size > 2 * 1024 * 1024) {
-            alert('Image size should be less than 2MB');
+            toast({ variant: 'error', title: 'Image too large', description: 'Please choose an image under 2MB.' });
             return;
         }
 
@@ -113,14 +116,14 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
                         });
                     }
                     
-                    alert('Profile image updated successfully!');
+                    toast({ variant: 'success', title: 'Profile image updated' });
                 } else {
                     const data = await response.json();
-                    alert(data.error || 'Failed to update image');
+                    toast({ variant: 'error', title: 'Could not update image', description: data.error || 'Please try again.' });
                 }
             } catch (error) {
                 console.error('Failed to upload image:', error);
-                alert('An error occurred during upload.');
+                toast({ variant: 'error', title: 'Could not update image', description: 'Please try again.' });
             }
         };
         reader.readAsDataURL(file);
@@ -238,6 +241,17 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
         const s = seconds % 60;
         return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     };
+
+    const activeMemberCount = chain.members.filter((member: any) => member.isWorking).length;
+    const nextCheckInAt = chain.members.reduce((earliest: number, member: any) => {
+        if (!member.isWorking) return earliest;
+        const lastSeen = member.lastVisitAt || member.lastStartedAt;
+        if (!lastSeen) return earliest;
+        return Math.min(earliest, lastSeen + 3 * 60 * 60 * 1000);
+    }, Number.POSITIVE_INFINITY);
+    const nextCheckInLabel = Number.isFinite(nextCheckInAt)
+        ? formatTime(Math.max(0, Math.floor((nextCheckInAt - Date.now()) / 1000)))
+        : '—';
 
     const formatCreatedAt = (value?: string | Date) => {
         if (!value) return null;
@@ -410,6 +424,21 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
                         <p className="text-xs text-zinc-500 max-w-xl">
                             Timer rule: every 3-hour block requires at least one visit to this chain page. Missing a visit stops the running member. If everyone stops, the chain auto-bursts.
                         </p>
+                        <div className="flex flex-wrap gap-2 pt-1">
+                            <span className="app-chip">
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                {activeMemberCount} active
+                            </span>
+                            <span className="app-chip">
+                                {chain.members.length} members
+                            </span>
+                            <span className="app-chip">
+                                next check-in {nextCheckInLabel}
+                            </span>
+                            <span className="app-chip">
+                                record {formatTime(chain.maxTime || chain.totalTime || 0)}
+                            </span>
+                        </div>
                     </div>
 
                     <div className="bg-white/5 border border-white/10 rounded-3xl p-6 flex flex-col items-end min-w-[240px]">
@@ -424,8 +453,39 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
                 </div>
 
                 {/* Chain Visual Tree View */}
-                <div className="flex-1 overflow-auto py-12 px-4 scrollbar-hide min-h-[500px]">
-                    <div className="flex justify-center min-w-max">
+                <div className="flex-1 overflow-auto py-6 px-4 scrollbar-hide min-h-[500px]">
+                    <div className={`sticky top-0 z-20 mb-2 flex justify-end gap-1.5 py-2 backdrop-blur ${isLightTheme ? 'bg-white/80' : 'bg-black/70'}`}>
+                        <button
+                            type="button"
+                            onClick={() => setZoom((value) => Math.max(0.5, Math.round((value - 0.1) * 10) / 10))}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-zinc-300 transition-colors hover:bg-white/10 hover:text-white"
+                            aria-label="Zoom out"
+                        >
+                            −
+                        </button>
+                        <span className="flex min-w-[52px] items-center justify-center rounded-lg border border-white/10 bg-white/5 px-2 text-xs font-semibold text-zinc-400">
+                            {Math.round(zoom * 100)}%
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => setZoom((value) => Math.min(1.6, Math.round((value + 0.1) * 10) / 10))}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-zinc-300 transition-colors hover:bg-white/10 hover:text-white"
+                            aria-label="Zoom in"
+                        >
+                            +
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setZoom(1)}
+                            className="rounded-lg border border-white/10 bg-white/5 px-3 text-xs font-semibold text-zinc-400 transition-colors hover:bg-white/10 hover:text-white"
+                        >
+                            Reset
+                        </button>
+                    </div>
+                    <div
+                        className="flex min-w-max justify-center transition-transform duration-200"
+                        style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
+                    >
                         <input
                             type="file"
                             ref={fileInputRef}

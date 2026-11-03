@@ -11,6 +11,8 @@ interface ChainNodeProps {
         isWorking: boolean;
         contributionTime: number;
         parentId?: string;
+        lastVisitAt?: number;
+        lastStartedAt?: number;
     };
     isCurrentUser?: boolean;
     onImageClick?: () => void;
@@ -40,6 +42,16 @@ export function ChainNode({ member, isCurrentUser, onImageClick, onNodeClick, on
         if (m > 0) return `${m}m ${s}s`;
         return `${s}s`;
     };
+
+    const lastSeenAt = member.lastVisitAt || member.lastStartedAt;
+    const checkInMinutesLeft = member.isWorking && lastSeenAt
+        ? Math.max(0, Math.ceil((lastSeenAt + 3 * 60 * 60 * 1000 - Date.now()) / 60000))
+        : null;
+    const checkInLabel = checkInMinutesLeft === null
+        ? null
+        : checkInMinutesLeft >= 60
+            ? `${Math.floor(checkInMinutesLeft / 60)}h ${checkInMinutesLeft % 60}m`
+            : `${checkInMinutesLeft}m`;
 
     return (
         <div className="flex flex-col items-center">
@@ -95,6 +107,11 @@ export function ChainNode({ member, isCurrentUser, onImageClick, onNodeClick, on
                 <div className="text-center w-32">
                     <h4 className="text-white font-medium text-sm truncate">{member.name}</h4>
                     <p className="text-[10px] text-zinc-500 mt-0.5">{formatTime(member.contributionTime)}</p>
+                    {checkInLabel && (
+                        <p className={`mt-0.5 text-[9px] font-semibold ${checkInMinutesLeft !== null && checkInMinutesLeft <= 30 ? 'text-red-400' : 'text-amber-400'}`}>
+                            check-in in {checkInLabel}
+                        </p>
+                    )}
                     
                     {isCurrentUser && onAddMember && (
                         <button

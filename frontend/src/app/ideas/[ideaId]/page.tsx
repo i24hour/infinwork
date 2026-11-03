@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, use } from 'react';
 import { Sidebar } from '@/components/Sidebar';
+import { useToast } from '@/components/ui/toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
@@ -36,6 +38,8 @@ export default function IdeaDiscussionPage({ params }: { params: Promise<{ ideaI
     const selectedIdeaId = resolvedParams.ideaId;
     
     const { data: session } = useSession();
+    const { toast } = useToast();
+    const { confirm: confirmAction } = useConfirm();
     const myEmail = session?.user?.email;
 
     const [selectedIdea, setSelectedIdea] = useState<Idea | null>(null);
@@ -96,7 +100,8 @@ export default function IdeaDiscussionPage({ params }: { params: Promise<{ ideaI
         if (!file) return;
 
         if (file.size > 2 * 1024 * 1024) {
-            alert('Image too large (max 2MB)');
+            toast({ variant: 'error', title: 'Image too large', description: 'Please choose an image under 2MB.' });
+            e.target.value = '';
             return;
         }
 
@@ -132,6 +137,7 @@ export default function IdeaDiscussionPage({ params }: { params: Promise<{ ideaI
             if (fileInputRef.current) fileInputRef.current.value = '';
         } catch (err) {
             console.error('Failed to send reply:', err);
+            toast({ variant: 'error', title: 'Could not post reply', description: 'Please try again.' });
         } finally {
             setSendingReply(false);
         }
@@ -159,12 +165,21 @@ export default function IdeaDiscussionPage({ params }: { params: Promise<{ ideaI
     };
 
     const handleDeleteReply = async (replyId: string) => {
-        if (!confirm('Are you sure you want to delete this reply?')) return;
+        const confirmed = await confirmAction({
+            title: 'Delete this reply?',
+            description: 'The reply and its content will be removed permanently.',
+            confirmLabel: 'Delete reply',
+            destructive: true,
+        });
+        if (!confirmed) return;
         setReplies(prev => prev.filter(r => r._id !== replyId));
         try {
-            await fetch(`/api/replies/${replyId}`, { method: 'DELETE' });
+            const response = await fetch(`/api/replies/${replyId}`, { method: 'DELETE' });
+            if (!response.ok) throw new Error('Delete failed');
+            toast({ variant: 'success', title: 'Reply deleted' });
         } catch (err) {
             console.error('Failed to delete reply:', err);
+            toast({ variant: 'error', title: 'Could not delete reply' });
             fetchReplies(selectedIdeaId!);
         }
     };
@@ -183,6 +198,7 @@ export default function IdeaDiscussionPage({ params }: { params: Promise<{ ideaI
             setEditingContent('');
         } catch (err) {
             console.error('Failed to save edit:', err);
+            toast({ variant: 'error', title: 'Could not save reply' });
         }
     };
 

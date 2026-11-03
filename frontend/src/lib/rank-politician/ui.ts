@@ -28,6 +28,19 @@ export function scrapeStatusClass(status?: string | null): string {
     }
 }
 
+export function partyClass(party?: string | null): string {
+    const value = String(party || '').toLowerCase();
+    if (value.includes('bjp')) return 'border-orange-500/30 bg-orange-500/10 text-orange-300';
+    if (value.includes('congress') || value === 'inc') return 'border-sky-500/30 bg-sky-500/10 text-sky-300';
+    if (value.includes('shiv sena')) return 'border-amber-500/30 bg-amber-500/10 text-amber-300';
+    if (value.includes('ncp')) return 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300';
+    if (value.includes('tmc') || value.includes('trinamool')) return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
+    if (value.includes('dmk')) return 'border-red-500/30 bg-red-500/10 text-red-300';
+    if (value.includes('bjd')) return 'border-lime-500/30 bg-lime-500/10 text-lime-300';
+    if (value.includes('janata') || value.includes('jd(') || value.includes('jdu')) return 'border-teal-500/30 bg-teal-500/10 text-teal-300';
+    return 'border-white/10 bg-white/5 text-zinc-300';
+}
+
 export function categoryLabel(category: string): string {
     const labels: Record<string, string> = {
         on_portfolio: 'On portfolio',

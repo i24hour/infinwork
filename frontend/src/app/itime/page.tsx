@@ -4,6 +4,8 @@ import { Sidebar } from '@/components/Sidebar';
 import { SignInModal } from '@/components/SignInModal';
 import { useSession, signOut } from 'next-auth/react';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
+import { useToast } from '@/components/ui/toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } from '@/lib/score';
 import { PerformanceChart } from '@/components/PerformanceChart';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -118,6 +120,15 @@ function buildTaskPayload(task: ITimeTask): Record<string, unknown> {
     return payload;
 }
 
+function formatCompactDuration(seconds: number): string {
+    const safe = Math.max(0, Math.floor(seconds));
+    const hours = Math.floor(safe / 3600);
+    const minutes = Math.floor((safe % 3600) / 60);
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m`;
+    return `${safe}s`;
+}
+
 function readGuestTasks(): ITimeTask[] {
     if (typeof window === 'undefined') return [];
     try {
@@ -132,8 +143,70 @@ function readGuestTasks(): ITimeTask[] {
     }
 }
 
+function TargetRing({ elapsed, target }: { elapsed: number; target: number }) {
+    const pct = target > 0 ? Math.min(1, elapsed / target) : 0;
+    const radius = 17;
+    const circumference = 2 * Math.PI * radius;
+    const offset = circumference * (1 - pct);
+    const complete = pct >= 1;
+
+    return (
+        <div className="relative h-11 w-11 shrink-0" title={`${Math.round(pct * 100)}% of target`}>
+            <svg viewBox="0 0 44 44" className="h-11 w-11 -rotate-90" aria-hidden="true">
+                <circle cx="22" cy="22" r={radius} fill="none" stroke="rgba(128,128,128,0.2)" strokeWidth="4" />
+                <circle
+                    cx="22"
+                    cy="22"
+                    r={radius}
+                    fill="none"
+                    stroke={complete ? '#4CAF50' : '#a1a1aa'}
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                    strokeDasharray={circumference}
+                    strokeDashoffset={offset}
+                    className="transition-[stroke-dashoffset] duration-500"
+                />
+            </svg>
+            <span className={`absolute inset-0 flex items-center justify-center text-[9px] font-bold ${complete ? 'text-[#4CAF50]' : 'text-zinc-400'}`}>
+                {Math.round(pct * 100)}%
+            </span>
+        </div>
+    );
+}
+
+function getTaskIntervals(task: ITimeTask, now: number): Array<{ start: number; end: number }> {
+    if (task.events && task.events.length > 0) {
+        const intervals: Array<{ start: number; end: number }> = [];
+        let isRunning = false;
+        let lastStart = 0;
+        for (const event of task.events) {
+            if (event.timestamp > now) break;
+            if (event.type === 'start') {
+                if (!isRunning) {
+                    isRunning = true;
+                    lastStart = event.timestamp;
+                }
+            } else if (isRunning) {
+                intervals.push({ start: lastStart, end: event.timestamp });
+                isRunning = false;
+            }
+        }
+        if (isRunning && !task.completed && !task.cancelledAt) {
+            intervals.push({ start: lastStart, end: now });
+        }
+        return intervals;
+    }
+
+    const start = task.startTime;
+    if (!start) return [];
+    const end = task.completedAt || (task.enabled ? now : start + (task.pausedElapsed || 0) * 1000);
+    return end > start ? [{ start, end }] : [];
+}
+
 export default function ITimePage() {
     const { data: session, status } = useSession();
+    const { toast } = useToast();
+    const { confirm } = useConfirm();
     const initialTasksCache = getCachedData<{ tasks?: Array<Omit<ITimeTask, 'id'> & { id?: string }> }>('/api/itime');
     const initialSettingsCache = getCachedData<{
         username?: string;
@@ -251,13 +324,15 @@ export default function ITimePage() {
             return true;
         } catch (error) {
             console.error('Error saving task:', error);
-            setSaveError(error instanceof Error ? error.message : 'Could not save task');
+            const message = error instanceof Error ? error.message : 'Could not save task';
+            setSaveError(message);
+            toast({ variant: 'error', title: 'Could not save task', description: message });
             // Re-sync so the UI never keeps an optimistic state the server rejected.
             invalidateCache('/api/itime');
             fetchTasks();
             return false;
         }
-    }, [fetchTasks, status]);
+    }, [fetchTasks, status, toast]);
 
     const pauseMenuRef = useRef<HTMLDivElement>(null);
     const resumingTaskIdsRef = useRef<Set<string>>(new Set());
@@ -410,19 +485,20 @@ export default function ITimePage() {
         }
     }, [tasks, status, hasLoadedTasksOnce]);
 
-    const handleAddTask = async () => {
-        if (!newTitle.trim() || status === 'loading') return;
+    const createTask = async (title: string, description: string, targetTime?: number) => {
+        if (!title.trim() || status === 'loading') return;
 
         const now = Date.now();
         const newTask: ITimeTask = {
-            id: `guest-${now}`,
-            title: newTitle.trim(),
-            description: newDescription,
+            id: `guest-${now}-${Math.random().toString(36).slice(2, 7)}`,
+            title: title.trim(),
+            description,
             startTime: now,
             pausedElapsed: 0,
             enabled: true,
             completed: false,
             isPublic: true,
+            ...(targetTime ? { targetTime } : {}),
             milestones: [],
             events: [{ type: 'start', timestamp: now }],
         };
@@ -434,6 +510,7 @@ export default function ITimePage() {
             setNewTitle('');
             setNewDescription('');
             setSaveError(null);
+            toast({ variant: 'success', title: 'Task started', description: 'Saved locally in guest mode.' });
             return;
         }
 
@@ -458,11 +535,23 @@ export default function ITimePage() {
             setNewTitle('');
             setNewDescription('');
             setSaveError(null);
+            toast({
+                variant: 'success',
+                title: 'Task started',
+                description: targetTime ? `Target set to ${Math.round(targetTime / 60)} minutes.` : undefined,
+            });
         } catch (error) {
             console.error('Error saving task:', error);
-            setSaveError(error instanceof Error ? error.message : 'Could not create task');
+            const message = error instanceof Error ? error.message : 'Could not create task';
+            setSaveError(message);
+            toast({ variant: 'error', title: 'Could not create task', description: message });
         }
     };
+
+    const handleAddTask = () => createTask(newTitle, newDescription);
+
+    const handleQuickStart = (minutes: number) =>
+        createTask(newTitle || `${minutes}-minute focus`, newDescription, minutes * 60);
 
     const toggleTask = async (id: string, breakMinutes?: number) => {
         const task = tasks.find(t => t.id === id);
@@ -550,9 +639,19 @@ export default function ITimePage() {
 
     const deleteTask = async (id: string) => {
         const task = tasks.find(t => t.id === id);
+        if (!task) return;
+
+        const confirmed = await confirm({
+            title: `Delete "${task.title}"?`,
+            description: 'The task and its tracked time will be removed permanently.',
+            confirmLabel: 'Delete task',
+            destructive: true,
+        });
+        if (!confirmed) return;
+
         setTasks((prev) => prev.filter((t) => t.id !== id));
 
-        if (status === 'authenticated' && task?._id) {
+        if (status === 'authenticated' && task._id) {
             try {
                 const response = await fetch(`/api/itime?id=${task._id}`, {
                     method: 'DELETE',
@@ -566,12 +665,17 @@ export default function ITimePage() {
                     );
                 }
                 setSaveError(null);
+                toast({ variant: 'success', title: 'Task deleted' });
             } catch (error) {
                 console.error('Error deleting task:', error);
-                setSaveError(error instanceof Error ? error.message : 'Could not delete task');
+                const message = error instanceof Error ? error.message : 'Could not delete task';
+                setSaveError(message);
+                toast({ variant: 'error', title: 'Could not delete task', description: message });
                 invalidateCache('/api/itime');
                 fetchTasks();
             }
+        } else {
+            toast({ variant: 'success', title: 'Task deleted' });
         }
     };
 
@@ -597,7 +701,14 @@ export default function ITimePage() {
         };
 
         setTasks((prev) => prev.map(t => t.id === id ? updatedTask : t));
-        await persistTask(updatedTask);
+        const saved = await persistTask(updatedTask);
+        if (saved) {
+            toast({
+                variant: 'success',
+                title: 'Task completed',
+                description: `${formatElapsed(finalElapsed)} tracked.`,
+            });
+        }
     };
 
     const addMilestone = async (taskId: string) => {
@@ -671,7 +782,13 @@ export default function ITimePage() {
         };
 
         setTasks((prev) => prev.map(t => t.id === id ? updatedTask : t));
-        await persistTask(updatedTask);
+        const saved = await persistTask(updatedTask);
+        if (saved) {
+            toast({
+                variant: 'info',
+                title: updatedTask.isPublic ? 'Task is now public' : 'Task is now private',
+            });
+        }
     };
 
     const setTargetTime = async (taskId: string) => {
@@ -688,7 +805,14 @@ export default function ITimePage() {
         setTasks((prev) => prev.map(t => t.id === taskId ? updatedTask : t));
         setTargetHours('');
         setTargetMinutes('');
-        await persistTask(updatedTask);
+        const saved = await persistTask(updatedTask);
+        if (saved) {
+            toast({
+                variant: 'success',
+                title: 'Target updated',
+                description: `Target set to ${formatElapsed(totalSeconds)}.`,
+            });
+        }
     };
 
     const getElapsedSeconds = useCallback((task: ITimeTask, now: number = Date.now()): number => {
@@ -818,6 +942,71 @@ export default function ITimePage() {
         setCompletedTasksPage((prev) => Math.min(prev, completedTasksTotalPages));
     }, [completedTasksTotalPages]);
 
+    const todayStats = useMemo(() => {
+        const now = scoreNow;
+        const istOffset = 5.5 * 60 * 60 * 1000;
+        const istNow = new Date(now + istOffset);
+        const todayStart = Date.UTC(
+            istNow.getUTCFullYear(),
+            istNow.getUTCMonth(),
+            istNow.getUTCDate()
+        ) - istOffset;
+
+        const focusSeconds = tasks.reduce((sum, task) => {
+            const intervals = getTaskIntervals(task, now);
+            return sum + intervals.reduce((intervalSum, interval) => {
+                const start = Math.max(interval.start, todayStart);
+                const end = Math.min(interval.end, now);
+                return intervalSum + Math.max(0, end - start) / 1000;
+            }, 0);
+        }, 0);
+
+        const doneToday = tasks.filter(
+            (task) => typeof task.completedAt === 'number' && task.completedAt >= todayStart
+        ).length;
+
+        const scoreAtStart = getScoreAtTime(
+            tasks,
+            todayStart,
+            gamificationPoints,
+            gamificationPointsLastUpdatedAt,
+            githubPointsHistory,
+            chainPoints,
+            chainPointsHistory
+        );
+        const scoreDelta = liveScore !== null ? liveScore - scoreAtStart : null;
+
+        const dayKey = (timestamp: number) => {
+            const date = new Date(timestamp + istOffset);
+            return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+        };
+        const completedDays = new Set(
+            tasks
+                .filter((task) => typeof task.completedAt === 'number')
+                .map((task) => dayKey(task.completedAt as number))
+        );
+        let streak = 0;
+        let cursor = todayStart;
+        if (!completedDays.has(dayKey(todayStart))) {
+            cursor -= 24 * 60 * 60 * 1000;
+        }
+        while (completedDays.has(dayKey(cursor))) {
+            streak += 1;
+            cursor -= 24 * 60 * 60 * 1000;
+        }
+
+        return { focusSeconds, doneToday, scoreDelta, streak };
+    }, [
+        tasks,
+        scoreNow,
+        liveScore,
+        gamificationPoints,
+        gamificationPointsLastUpdatedAt,
+        githubPointsHistory,
+        chainPoints,
+        chainPointsHistory,
+    ]);
+
     return (
         <div className="flex flex-col md:flex-row min-h-screen bg-black">
             <Sidebar />
@@ -871,39 +1060,50 @@ export default function ITimePage() {
                     </div>
                 </div>
 
-                {/* Stats */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-8">
+                {/* Today */}
+                <div className="grid grid-cols-2 gap-4 mb-3 md:grid-cols-4 md:gap-6">
                     <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
-                        <div className={`text-sm mb-2 ${isLightTheme ? 'text-zinc-700' : 'text-gray-400'}`}>Total Tasks</div>
-                        <div className={`text-2xl md:text-4xl font-bold ${isLightTheme ? 'text-zinc-900' : 'text-white'}`}>
-                            {tasksReady
-                                ? tasks.filter((task) => !task.cancelledAt).length
-                                : <span className={`inline-block h-8 md:h-10 w-14 animate-pulse rounded ${isLightTheme ? 'bg-black/10' : 'bg-white/10'}`} />}
+                        <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>Focus today</div>
+                        <div className={`text-2xl font-bold md:text-3xl ${isLightTheme ? 'text-zinc-900' : 'text-white'}`}>
+                            {tasksReady ? formatCompactDuration(todayStats.focusSeconds) : '—'}
                         </div>
                     </div>
 
                     <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
-                        <div className={`text-sm mb-2 ${isLightTheme ? 'text-zinc-700' : 'text-zinc-300'}`}>Running</div>
-                        <div className={`text-2xl md:text-4xl font-bold ${isLightTheme ? 'text-zinc-900' : 'text-white'}`}>
-                            {tasksReady ? activeTasks : <span className={`inline-block h-8 md:h-10 w-14 animate-pulse rounded ${isLightTheme ? 'bg-black/10' : 'bg-white/10'}`} />}
+                        <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>Done today</div>
+                        <div className={`text-2xl font-bold md:text-3xl ${isLightTheme ? 'text-zinc-900' : 'text-white'}`}>
+                            {tasksReady ? todayStats.doneToday : '—'}
                         </div>
                     </div>
 
                     <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
-                        <div className={`text-sm mb-2 ${isLightTheme ? 'text-zinc-700' : 'text-zinc-300'}`}>Completed</div>
-                        <div className={`text-2xl md:text-4xl font-bold ${isLightTheme ? 'text-zinc-900' : 'text-white'}`}>
-                            {tasksReady ? completedTasks.length : <span className={`inline-block h-8 md:h-10 w-14 animate-pulse rounded ${isLightTheme ? 'bg-black/10' : 'bg-white/10'}`} />}
+                        <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>Live score</div>
+                        <div className={`font-mono text-2xl font-bold md:text-3xl ${liveScoreColorClass}`}>
+                            {scoreReady && liveScore !== null ? liveScore.toFixed(2) : '—'}
                         </div>
+                        {scoreReady && todayStats.scoreDelta !== null && (
+                            <div className={`mt-1 text-xs font-semibold ${todayStats.scoreDelta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                {todayStats.scoreDelta >= 0 ? '+' : ''}{todayStats.scoreDelta.toFixed(2)} today
+                            </div>
+                        )}
                     </div>
 
                     <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
-                        <div className={`text-sm mb-2 ${isLightTheme ? 'text-zinc-700' : 'text-zinc-300'}`}>Live Score</div>
-                        <div className={`text-2xl md:text-4xl font-bold ${liveScoreColorClass}`}>
-                            {scoreReady && liveScore !== null
-                                ? liveScore.toFixed(2)
-                                : <span className={`inline-block h-8 md:h-10 w-28 animate-pulse rounded ${isLightTheme ? 'bg-black/10' : 'bg-white/10'}`} />}
+                        <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>Streak</div>
+                        <div className={`text-2xl font-bold md:text-3xl ${isLightTheme ? 'text-zinc-900' : 'text-white'}`}>
+                            {todayStats.streak} <span className="text-sm font-normal text-zinc-500">days</span>
                         </div>
                     </div>
+                </div>
+
+                <div className={`mb-8 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>
+                    <span>{tasks.filter((task) => !task.cancelledAt).length} total tasks</span>
+                    <span className="text-zinc-700">·</span>
+                    <span>{activeTasks} running</span>
+                    <span className="text-zinc-700">·</span>
+                    <span>{completedTasks.length} completed</span>
+                    <span className="text-zinc-700">·</span>
+                    <span>{todayStats.focusSeconds > 0 ? 'Timer running' : 'No focus logged yet'}</span>
                 </div>
 
                 {/* Performance Chart */}
@@ -922,6 +1122,11 @@ export default function ITimePage() {
                             <div className={`h-full w-full rounded-xl animate-pulse ${isLightTheme ? 'bg-black/5' : 'bg-white/5'}`} />
                         </div>
                     )}
+                    <div className={`mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>
+                        <span>Score = task score + GitHub + chain − idle penalty</span>
+                        <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> positive day</span>
+                        <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-red-500" /> negative day</span>
+                    </div>
                 </div>
 
                 {saveError && (
@@ -971,6 +1176,26 @@ export default function ITimePage() {
                     >
                         + Add Task
                     </LiquidButton>
+
+                    <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-white/10 pt-4">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                            Quick start
+                        </span>
+                        {[25, 50, 90].map((minutes) => (
+                            <button
+                                key={minutes}
+                                type="button"
+                                onClick={() => handleQuickStart(minutes)}
+                                className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-zinc-300 transition-colors hover:border-white/25 hover:bg-white/10 hover:text-white"
+                                aria-label={`Start a ${minutes}-minute focus task`}
+                            >
+                                +{minutes}m
+                            </button>
+                        ))}
+                        <span className="text-xs text-zinc-600">
+                            {newTitle.trim() ? `Uses “${newTitle.trim()}”` : 'Creates a timed focus task'}
+                        </span>
+                    </div>
                 </div>
 
                 {/* Pending Tasks */}
@@ -1012,6 +1237,16 @@ export default function ITimePage() {
                                                     {task.description}
                                                 </div>
                                             )}
+                                            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-zinc-500">
+                                                {task.targetTime ? (
+                                                    <span>Target {formatElapsed(task.targetTime)}</span>
+                                                ) : null}
+                                                {task.milestones && task.milestones.length > 0 ? (
+                                                    <span>
+                                                        {task.milestones.filter((milestone) => milestone.completed).length}/{task.milestones.length} milestones
+                                                    </span>
+                                                ) : null}
+                                            </div>
                                         </div>
                                         <LiquidButton
                                             variant="ghost"
@@ -1021,6 +1256,7 @@ export default function ITimePage() {
                                                 deleteTask(task.id);
                                             }}
                                             className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-500 hover:text-white"
+                                            aria-label={`Delete ${task.title}`}
                                         >
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1028,11 +1264,16 @@ export default function ITimePage() {
                                         </LiquidButton>
                                     </div>
 
-                                    <div className="flex items-center justify-between pt-2 border-t border-white/10">
-                                        <div>
-                                            <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-0.5">Worked</div>
-                                            <div className="text-2xl font-mono font-bold text-white">
-                                                <LiveTimer task={task} getElapsedSeconds={getElapsedSeconds} formatElapsed={formatElapsed} />
+                                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10">
+                                        <div className="flex items-center gap-2.5">
+                                            {task.targetTime ? (
+                                                <TargetRing elapsed={getElapsedSeconds(task)} target={task.targetTime} />
+                                            ) : null}
+                                            <div>
+                                                <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-0.5">Worked</div>
+                                                <div className="text-2xl font-mono font-bold text-white">
+                                                    <LiveTimer task={task} getElapsedSeconds={getElapsedSeconds} formatElapsed={formatElapsed} />
+                                                </div>
                                             </div>
                                         </div>
                                         <div className="flex gap-2 items-center">
@@ -1044,6 +1285,7 @@ export default function ITimePage() {
                                                 }}
                                                 className={`${task.isPublic !== false ? 'text-zinc-400 hover:text-white' : 'text-zinc-600 hover:text-zinc-400'} transition-colors`}
                                                 title={task.isPublic !== false ? "Make Private" : "Make Public"}
+                                                aria-label={task.isPublic !== false ? "Make task private" : "Make task public"}
                                             >
                                                 {task.isPublic !== false ? (
                                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1206,6 +1448,7 @@ export default function ITimePage() {
                                                 }}
                                                 className={`${task.isPublic !== false ? 'text-zinc-400 hover:text-white' : 'text-zinc-600 hover:text-zinc-400'} transition-colors`}
                                                 title={task.isPublic !== false ? "Make Private" : "Make Public"}
+                                                aria-label={task.isPublic !== false ? "Make task private" : "Make task public"}
                                             >
                                                 {task.isPublic !== false ? (
                                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

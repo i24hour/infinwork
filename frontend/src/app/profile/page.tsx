@@ -5,12 +5,14 @@ import { useSession, signIn } from 'next-auth/react';
 import { Sidebar } from '@/components/Sidebar';
 import { PortfolioView } from '@/components/profile/PortfolioView';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
+import { useToast } from '@/components/ui/toast';
 import type { PublicProfile } from '@/types/profile';
 import type { GithubContributionCalendar } from '@/types/github-contributions';
 import { fetchWithCache, getCachedData, setCachedData } from '@/lib/client-cache';
 
 export default function ProfileEditorPage() {
     const { data: session, status } = useSession();
+    const { toast } = useToast();
     const initialCached = getCachedData<{ profile?: PublicProfile }>('/api/profile');
     const [profile, setProfile] = useState<PublicProfile | null>(() => initialCached?.profile || null);
     const [githubCalendar, setGithubCalendar] = useState<GithubContributionCalendar | null>(() => {
@@ -86,12 +88,12 @@ export default function ProfileEditorPage() {
             const res = await fetch('/api/user/link-github-init', { method: 'POST' });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-                alert(data.error || 'Could not start GitHub connection. Please try again.');
+                toast({ variant: 'error', title: 'Could not connect GitHub', description: data.error || 'Please try again.' });
                 return;
             }
             await signIn('github');
         } catch {
-            alert('Could not start GitHub connection. Please try again.');
+            toast({ variant: 'error', title: 'Could not connect GitHub', description: 'Please try again.' });
         }
     };
 
@@ -103,7 +105,7 @@ export default function ProfileEditorPage() {
         });
         if (!res.ok) {
             const data = await res.json().catch(() => ({}));
-            alert(data.error || 'Could not hide GitHub contributions. Please try again.');
+            toast({ variant: 'error', title: 'Could not hide GitHub contributions', description: data.error || 'Please try again.' });
             return;
         }
         setProfile((p) => {
@@ -122,7 +124,7 @@ export default function ProfileEditorPage() {
         });
         if (!res.ok) {
             const data = await res.json().catch(() => ({}));
-            alert(data.error || 'Could not show GitHub contributions. Please try again.');
+            toast({ variant: 'error', title: 'Could not show GitHub contributions', description: data.error || 'Please try again.' });
             return;
         }
         setProfile((p) => {

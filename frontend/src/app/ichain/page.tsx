@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Sidebar } from '@/components/Sidebar';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
+import { useToast } from '@/components/ui/toast';
 import { CreateChainModal } from '@/components/ichain/CreateChainModal';
 import { ChainCard } from '@/components/ichain/ChainCard';
 import { fetchWithCache, getCachedData, setCachedData } from '@/lib/client-cache';
@@ -12,6 +13,7 @@ import { fetchWithCache, getCachedData, setCachedData } from '@/lib/client-cache
 export default function IChainPage() {
     const { data: session } = useSession();
     const router = useRouter();
+    const { toast } = useToast();
     const initialCached = getCachedData<{ chains?: any[] }>('/api/ichain');
     const [chains, setChains] = useState<any[]>(() => initialCached?.chains || []);
     const [isLoading, setIsLoading] = useState<boolean>(() => !initialCached);
@@ -180,7 +182,7 @@ export default function IChainPage() {
                                                                 e.preventDefault();
                                                                 e.stopPropagation();
                                                                 navigator.clipboard.writeText(`${window.location.origin}/ichain/${chain._id}`);
-                                                                alert('Invite link copied to clipboard!');
+                                                                toast({ variant: 'success', title: 'Invite link copied' });
                                                             }}
                                                             className="p-1 text-zinc-500 hover:text-white transition-colors"
                                                             title="Copy Invite Link"

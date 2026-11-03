@@ -5,6 +5,8 @@ import { useSession } from 'next-auth/react';
 import { Sidebar } from '@/components/Sidebar';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
+import { useToast } from '@/components/ui/toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import Link from 'next/link';
 import {
     fetchWithCache,
@@ -35,6 +37,8 @@ interface SFLeaderboardUser {
 
 export default function SFTrackerPage() {
     const { status } = useSession();
+    const { toast } = useToast();
+    const { confirm: confirmAction } = useConfirm();
     const initialTargets = getCachedData<{ targets?: SFTrackerItem[] }>('/api/sf-tracker');
     const initialLeaderboard = getCachedData<{ leaderboard?: SFLeaderboardUser[] }>('/api/sf-tracker/all');
     const [targets, setTargets] = useState<SFTrackerItem[]>(() => initialTargets?.targets || []);
@@ -126,6 +130,7 @@ export default function SFTrackerPage() {
                 invalidateCache('/api/sf-tracker/all');
                 setNewTarget('');
                 setNewCondition('');
+                toast({ variant: 'success', title: 'Target locked', description: 'Now execute it.' });
             }
         } catch (error) {
             console.error('Failed to create target:', error);
@@ -153,6 +158,7 @@ export default function SFTrackerPage() {
                 return next;
             });
             invalidateCache('/api/sf-tracker/all');
+            toast({ variant: 'success', title: 'Success logged' });
         } catch (error) {
             console.error('Failed to mark success:', error);
         }
@@ -189,6 +195,7 @@ export default function SFTrackerPage() {
             });
             invalidateCache('/api/sf-tracker/all');
             setFailureModalOpen(false);
+            toast({ variant: 'info', title: 'Failure logged', description: 'Acknowledged and recorded.' });
         } catch (error) {
             console.error('Failed to submit failure:', error);
         } finally {
@@ -197,7 +204,13 @@ export default function SFTrackerPage() {
     };
 
     const handleDelete = async (id: string) => {
-        if (!confirm('Delete this tracker permanently?')) return;
+        const confirmed = await confirmAction({
+            title: 'Delete this tracker?',
+            description: 'The target, status and failure reason will be removed permanently.',
+            confirmLabel: 'Delete tracker',
+            destructive: true,
+        });
+        if (!confirmed) return;
         try {
             const res = await fetch(`/api/sf-tracker/${id}`, { method: 'DELETE' });
             if (!res.ok) {
@@ -210,6 +223,7 @@ export default function SFTrackerPage() {
                 return next;
             });
             invalidateCache('/api/sf-tracker/all');
+            toast({ variant: 'success', title: 'Tracker deleted' });
         } catch (error) {
             console.error('Failed to delete target:', error);
         }
@@ -477,6 +491,9 @@ export default function SFTrackerPage() {
                                         )}
                                         <div>
                                             <div className="text-lg font-bold text-white group-hover:text-zinc-200 transition-colors">{user.username}</div>
+                                            <div className="mt-0.5 text-xs font-semibold text-emerald-400">
+                                                {Number(user.successRate || 0).toFixed(1)}% success
+                                            </div>
                                         </div>
                                     </div>
 

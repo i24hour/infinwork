@@ -8,6 +8,7 @@ import { Sidebar } from '@/components/Sidebar';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import {
     formatRelativeTime,
+    partyClass,
     scrapeStatusClass,
     scrapeStatusLabel,
 } from '@/lib/rank-politician/ui';
@@ -33,6 +34,13 @@ function useIsLightTheme() {
     }, []);
 
     return isLightTheme;
+}
+
+function rankBadgeClass(rank: number): string {
+    if (rank === 1) return 'border-amber-400/50 bg-amber-400/10 text-amber-300';
+    if (rank === 2) return 'border-zinc-300/40 bg-zinc-300/10 text-zinc-300';
+    if (rank === 3) return 'border-orange-400/40 bg-orange-400/10 text-orange-300';
+    return 'border-white/10 bg-white/5 text-zinc-400';
 }
 
 interface PoliticianRow {
@@ -444,7 +452,7 @@ export default function RankPoliticianPage() {
                                                 className={`${panel} p-4 flex flex-col md:flex-row md:items-center gap-4 hover:border-zinc-700 transition-colors cursor-pointer group w-full`}
                                             >
                                                 <div className="flex items-center gap-4 flex-1 min-w-0 md:max-w-[360px]">
-                                                    <div className="flex flex-col items-center justify-center shrink-0 w-8 h-8 rounded-lg bg-white/5 border border-white/10 text-zinc-400 font-bold text-sm">
+                                                    <div className={`flex h-8 w-8 shrink-0 flex-col items-center justify-center rounded-lg border text-sm font-bold ${rankBadgeClass(politician.rank)}`}>
                                                         #{politician.rank}
                                                     </div>
                                                     <div className="w-12 h-12 rounded-full bg-white/10 flex shrink-0 items-center justify-center text-white font-bold text-xl uppercase ring-1 ring-white/20 overflow-hidden">
@@ -463,6 +471,9 @@ export default function RankPoliticianPage() {
                                                             <h3 className={`text-lg font-medium truncate ${isLightTheme ? 'text-zinc-900' : 'text-zinc-200'}`}>
                                                                 {politician.name}
                                                             </h3>
+                                                            <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${partyClass(politician.party)}`}>
+                                                                {politician.party}
+                                                            </span>
                                                             <span
                                                                 className={`shrink-0 text-[10px] uppercase tracking-wide px-2 py-0.5 rounded border ${scrapeStatusClass(politician.lastScrapeStatus)}`}
                                                             >
@@ -498,6 +509,12 @@ export default function RankPoliticianPage() {
                                                         <span className={`block text-2xl font-bold leading-none ${heading}`}>
                                                             {pct.toFixed(1)}%
                                                         </span>
+                                                        <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-white/10">
+                                                            <div
+                                                                className="h-full rounded-full bg-emerald-500 transition-[width] duration-500"
+                                                                style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+                                                            />
+                                                        </div>
                                                     </div>
                                                     <div
                                                         className={`bg-black rounded-xl px-4 py-2 border flex flex-col justify-center min-w-[110px] flex-1 md:flex-none ${

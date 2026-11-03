@@ -6,6 +6,7 @@ import { useSession, signIn } from 'next-auth/react';
 import { Sidebar } from '@/components/Sidebar';
 import { PortfolioView } from '@/components/profile/PortfolioView';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
+import { useToast } from '@/components/ui/toast';
 import Link from 'next/link';
 import type { PublicProfile } from '@/types/profile';
 import type { GithubContributionCalendar } from '@/types/github-contributions';
@@ -14,6 +15,7 @@ export default function PublicProfilePage() {
     const params = useParams();
     const username = decodeURIComponent(params.username as string);
     const { data: session } = useSession();
+    const { toast } = useToast();
 
     const [profile, setProfile] = useState<PublicProfile | null>(null);
     const [githubCalendar, setGithubCalendar] = useState<GithubContributionCalendar | null>(null);
@@ -83,7 +85,7 @@ export default function PublicProfilePage() {
         });
         if (!res.ok) {
             const data = await res.json().catch(() => ({}));
-            alert(data.error || 'Could not hide GitHub contributions. Please try again.');
+            toast({ variant: 'error', title: 'Could not hide GitHub contributions', description: data.error || 'Please try again.' });
             return;
         }
         setProfile((p) => (p ? { ...p, showGithubContributions: false } : p));
@@ -99,7 +101,7 @@ export default function PublicProfilePage() {
         });
         if (!res.ok) {
             const data = await res.json().catch(() => ({}));
-            alert(data.error || 'Could not show GitHub contributions. Please try again.');
+            toast({ variant: 'error', title: 'Could not show GitHub contributions', description: data.error || 'Please try again.' });
             return;
         }
         setProfile((p) => (p ? { ...p, showGithubContributions: true } : p));
@@ -111,12 +113,12 @@ export default function PublicProfilePage() {
             const res = await fetch('/api/user/link-github-init', { method: 'POST' });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-                alert(data.error || 'Could not start GitHub connection. Please try again.');
+                toast({ variant: 'error', title: 'Could not connect GitHub', description: data.error || 'Please try again.' });
                 return;
             }
             await signIn('github');
         } catch {
-            alert('Could not start GitHub connection. Please try again.');
+            toast({ variant: 'error', title: 'Could not connect GitHub', description: 'Please try again.' });
         }
     };
 

@@ -4,6 +4,8 @@ import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useState } from 'react';
+import { useToast } from '@/components/ui/toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 
 interface ChainCardProps {
     chain: {
@@ -23,6 +25,8 @@ interface ChainCardProps {
 
 export function ChainCard({ chain, rank, onDelete }: ChainCardProps) {
     const { data: session } = useSession();
+    const { toast } = useToast();
+    const { confirm: confirmAction } = useConfirm();
     const [isDeleting, setIsDeleting] = useState(false);
     const [isCopied, setIsCopied] = useState(false);
     const activeMembers = (chain.members || []).filter(m => m.isWorking).length;
@@ -33,7 +37,13 @@ export function ChainCard({ chain, rank, onDelete }: ChainCardProps) {
         e.preventDefault();
         e.stopPropagation();
 
-        if (!confirm('Are you sure you want to delete this chain?')) return;
+        const confirmed = await confirmAction({
+            title: `Delete "${chain.name}"?`,
+            description: 'The chain and its member contributions will be removed. Chain points are recalculated.',
+            confirmLabel: 'Delete chain',
+            destructive: true,
+        });
+        if (!confirmed) return;
 
         setIsDeleting(true);
         try {
@@ -42,9 +52,14 @@ export function ChainCard({ chain, rank, onDelete }: ChainCardProps) {
             });
             if (response.ok) {
                 onDelete?.(chain._id);
+                toast({ variant: 'success', title: 'Chain deleted' });
+            } else {
+                const data = await response.json().catch(() => ({}));
+                toast({ variant: 'error', title: 'Could not delete chain', description: data.error || 'Please try again.' });
             }
         } catch (error) {
             console.error('Failed to delete chain:', error);
+            toast({ variant: 'error', title: 'Could not delete chain' });
         } finally {
             setIsDeleting(false);
         }
