@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, use } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import { useToast } from '@/components/ui/toast';
 import { useConfirm } from '@/components/ui/confirm-dialog';
+import { MarkdownText } from '@/components/ui/markdown';
 import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
@@ -249,8 +250,8 @@ export default function IdeaDiscussionPage({ params }: { params: Promise<{ ideaI
                                                 {selectedIdea.title}
                                             </h1>
                                             {selectedIdea.details && (
-                                                <div className="text-[15px] text-white font-medium leading-relaxed bg-white/5 p-5 rounded-2xl border border-white/10 shadow-sm">
-                                                    {selectedIdea.details}
+                                                <div className="rounded-2xl border border-white/10 bg-white/5 p-5 text-[15px] font-medium text-white shadow-sm">
+                                                    <MarkdownText text={selectedIdea.details} />
                                                 </div>
                                             )}
                                         </div>
@@ -355,7 +356,7 @@ export default function IdeaDiscussionPage({ params }: { params: Promise<{ ideaI
                                                         </div>
                                                     ) : (
                                                         <>
-                                                            {reply.content && <p className="whitespace-pre-wrap">{reply.content}</p>}
+                                                            {reply.content && <MarkdownText text={reply.content} />}
                                                             {reply.imageUrl && (
                                                                 <div 
                                                                     className={`${reply.content ? 'mt-4' : ''} rounded-xl overflow-hidden border border-white/10 max-w-sm cursor-pointer relative group/img`}
@@ -389,6 +390,9 @@ export default function IdeaDiscussionPage({ params }: { params: Promise<{ ideaI
                                             rows={3}
                                             className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-4 text-[15px] text-white placeholder-zinc-500 outline-none focus:border-white/25 focus:bg-white/5 transition-colors resize-none shadow-inner"
                                         />
+                                        <p className="mt-1 px-1 text-[10px] text-zinc-600">
+                                            Markdown: <code className="text-zinc-500">**bold**</code>, <code className="text-zinc-500">`code`</code>, <code className="text-zinc-500">[link](https://…)</code>
+                                        </p>
                                         <div className="absolute right-3 bottom-3 flex items-center gap-2">
                                             <input 
                                                 type="file" 

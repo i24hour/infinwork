@@ -127,6 +127,15 @@ export function Sidebar() {
                 </div>
                 <div className="flex items-center gap-2">
                     <button
+                        onClick={() => window.dispatchEvent(new Event('infinwork:command'))}
+                        className={`p-2 rounded-md transition-colors ${theme === 'light' ? 'text-zinc-600 hover:text-black hover:bg-black/5' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
+                        aria-label="Open command palette"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M11 18a7 7 0 100-14 7 7 0 000 14z" />
+                        </svg>
+                    </button>
+                    <button
                         onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
                         className={`p-2 rounded-md transition-colors ${theme === 'light' ? 'text-zinc-600 hover:text-black hover:bg-black/5' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
                         title="Toggle Theme"
@@ -173,11 +182,28 @@ export function Sidebar() {
                 </button>
 
                 {/* Logo */}
-                <div className="mb-8 flex items-center gap-1">
+                <div className="mb-4 flex items-center gap-1">
                     <span className={`text-2xl font-semibold tracking-tight ${theme === 'light' ? 'text-black' : 'text-white'}`}>infinW</span>
                     <div className={`animate-spin-slow rounded-full h-6 w-6 border-t-2 border-b-2 mt-0.5 ${theme === 'light' ? 'border-black' : 'border-white'}`}></div>
                     <span className={`text-2xl font-semibold tracking-tight ${theme === 'light' ? 'text-black' : 'text-white'}`}>rK</span>
                 </div>
+
+                <button
+                    type="button"
+                    onClick={() => window.dispatchEvent(new Event('infinwork:command'))}
+                    className={`mb-6 flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-colors ${
+                        theme === 'light'
+                            ? 'border-black/10 text-zinc-600 hover:bg-black/5 hover:text-black'
+                            : 'border-white/10 text-zinc-500 hover:bg-white/5 hover:text-white'
+                    }`}
+                    aria-label="Open command palette"
+                >
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M11 18a7 7 0 100-14 7 7 0 000 14z" />
+                    </svg>
+                    <span className="flex-1 text-left">Search</span>
+                    <kbd className="rounded border border-white/10 px-1 py-0.5 text-[9px]">⌘K</kbd>
+                </button>
 
                 {/* Nav */}
                 <nav className="space-y-2 mb-8 w-full">

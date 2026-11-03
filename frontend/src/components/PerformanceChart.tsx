@@ -31,6 +31,14 @@ interface PerformanceChartProps {
 
 type ChartType = 'line' | 'candle' | 'daily';
 type CandleInterval = '1m' | '5m' | '10m' | '15m' | '1h' | '1d';
+type ChartRange = '7d' | '30d' | '90d' | '1y';
+
+const RANGE_DAYS: Record<ChartRange, number> = {
+    '7d': 7,
+    '30d': 30,
+    '90d': 90,
+    '1y': 365,
+};
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -235,6 +243,7 @@ export function PerformanceChart({
 }: PerformanceChartProps) {
     const [chartType, setChartType] = useState<ChartType>('daily');
     const [interval, setIntervalVal] = useState<CandleInterval>('15m');
+    const [range, setRange] = useState<ChartRange>('30d');
     const [isLightTheme, setIsLightTheme] = useState<boolean>(() => getInitialIsLightTheme());
     const [referenceNow, setReferenceNow] = useState(() => Date.now());
     const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -322,16 +331,7 @@ export function PerformanceChart({
         const intervalMs = getIntervalMs(interval);
         const snappedNow = snapToInterval(now, interval);
 
-        let startTime = snappedNow - (24 * 60 * 60 * 1000);
-
-        // Show full history by extending to the earliest task timestamp when available.
-        const earliestTaskStart = tasks.reduce((earliest, task) => {
-            const ts = task.events?.[0]?.timestamp ?? task.startTime;
-            return ts && ts < earliest ? ts : earliest;
-        }, now);
-        if (earliestTaskStart < startTime) {
-            startTime = earliestTaskStart;
-        }
+        let startTime = snappedNow - (RANGE_DAYS[range] * DAY_MS);
 
         let dataPointsCount = Math.floor((now - startTime) / intervalMs);
         if (dataPointsCount > 500) {
@@ -393,7 +393,7 @@ export function PerformanceChart({
         }
 
         return { candleData, lineData, baselineData };
-    }, [chartType, tasks, interval, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory, nowTick]);
+    }, [chartType, tasks, interval, range, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory, nowTick]);
 
     // Autoscale callbacks are installed once when the chart is created. Read
     // the latest data through a ref so the y-axis doesn't scale to stale data.
@@ -405,7 +405,7 @@ export function PerformanceChart({
     const dailyScoreData = useMemo(() => {
         const now = nowTick;
         const todayStart = getIstDayStart(now);
-        const firstVisibleDay = todayStart - (364 * DAY_MS);
+        const firstVisibleDay = todayStart - ((RANGE_DAYS[range] - 1) * DAY_MS);
         const firstDayOfWeek = new Date(firstVisibleDay + IST_OFFSET_MS).getUTCDay();
         const gridStart = firstVisibleDay - (firstDayOfWeek * DAY_MS);
         const rawDays: DailyScoreDay[] = [];
@@ -492,7 +492,7 @@ export function PerformanceChart({
             negativeTotal: Math.round(negativeTotal * 100) / 100,
             netTotal: Math.round(netTotal * 100) / 100,
         };
-    }, [tasks, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory, nowTick]);
+    }, [tasks, range, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory, nowTick]);
 
     const updateDailyTooltip = (event: React.MouseEvent<HTMLElement>, day: DailyScoreDay) => {
         const rect = dailyPanelRef.current?.getBoundingClientRect();
@@ -677,14 +677,20 @@ export function PerformanceChart({
                 : 0;
         }
         
-        // Instead of fitContent or hardcoded bar counts, we guarantee exactly 1 rolling month of history
+        // Show the selected range, clipped to the data we actually generated
+        // (very large ranges with 1m candles are capped at 500 buckets).
         if (dataLength > 0) {
             const nowInSeconds = Math.floor(Date.now() / 1000);
-            const thirtyDaysAgo = nowInSeconds - (30 * 24 * 60 * 60);
-            
+            const firstPoint = chartType === 'candle'
+                ? chartDataRef.current.candleData[0]
+                : chartDataRef.current.baselineData[0];
+            const firstTime = typeof firstPoint?.time === 'number'
+                ? firstPoint.time
+                : nowInSeconds - (RANGE_DAYS[range] * 24 * 60 * 60);
+
             // Note: time is passed as raw number to satisfy lightweight-charts Time type constraint
             chart.timeScale().setVisibleRange({
-                from: thirtyDaysAgo as unknown as import('lightweight-charts').Time,
+                from: firstTime as unknown as import('lightweight-charts').Time,
                 to: nowInSeconds as unknown as import('lightweight-charts').Time,
             });
         }
@@ -704,7 +710,7 @@ export function PerformanceChart({
             chartRef.current = null;
             seriesRef.current = null;
         };
-    }, [chartType, previousCloseValue, isLightTheme]);
+    }, [chartType, previousCloseValue, isLightTheme, range]);
 
     // Update data invisibly on poll (avoids calling fitContent and resetting pan)
     useEffect(() => {
@@ -819,6 +825,22 @@ export function PerformanceChart({
                         </button>
                     </div>
 
+                    <div className={`flex rounded-lg p-1 border ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-white/5 border-white/10'}`}>
+                        {(['7d', '30d', '90d', '1y'] as ChartRange[]).map((item) => (
+                            <button
+                                key={item}
+                                type="button"
+                                onClick={() => setRange(item)}
+                                className={`px-2.5 py-1.5 text-xs font-semibold rounded-md transition-all ${range === item
+                                    ? (isLightTheme ? 'bg-white text-zinc-900 border border-black/10 shadow-sm' : 'bg-zinc-800 text-white shadow-md')
+                                    : (isLightTheme ? 'text-zinc-600 hover:text-zinc-900' : 'text-zinc-500 hover:text-white')
+                                    }`}
+                            >
+                                {item}
+                            </button>
+                        ))}
+                    </div>
+
                     {/* Interval Selector (Candle Only) */}
                     {
                         chartType === 'candle' && (
@@ -882,7 +904,7 @@ export function PerformanceChart({
                     <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-6">
                         <div>
                             <div className={`text-[22px] leading-tight sm:text-2xl md:text-[26px] font-semibold tracking-tight ${isLightTheme ? 'text-zinc-950' : 'text-[#e6edf3]'}`}>
-                                {dailyScoreData.netTotal >= 0 ? '+' : ''}{dailyScoreData.netTotal.toFixed(2)} points in the last year
+                                {dailyScoreData.netTotal >= 0 ? '+' : ''}{dailyScoreData.netTotal.toFixed(2)} points in the last {range === '1y' ? 'year' : range}
                             </div>
                             <div className={`text-xs sm:text-sm mt-1 ${isLightTheme ? 'text-zinc-600' : 'text-[#8b949e]'}`}>
                                 +{dailyScoreData.positiveTotal.toFixed(2)} gained / {dailyScoreData.negativeTotal.toFixed(2)} lost

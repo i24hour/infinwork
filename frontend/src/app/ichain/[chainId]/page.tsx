@@ -22,6 +22,7 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
     const [isAddingMember, setIsAddingMember] = useState(false);
     const [isLightTheme, setIsLightTheme] = useState(false);
     const [zoom, setZoom] = useState(1);
+    const [view, setView] = useState<'tree' | 'list'>('tree');
     const { toast } = useToast();
     const fileInputRef = useRef<HTMLInputElement>(null);
     // Ignore poll responses that were started just before a mutation; they can
@@ -253,6 +254,20 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
         ? formatTime(Math.max(0, Math.floor((nextCheckInAt - Date.now()) / 1000)))
         : '—';
 
+    const maxContribution = Math.max(
+        1,
+        ...chain.members.map((member: any) => Number(member.contributionTime || 0))
+    );
+
+    const getCheckInLabel = (member: any) => {
+        if (!member.isWorking) return null;
+        const lastSeen = member.lastVisitAt || member.lastStartedAt;
+        if (!lastSeen) return null;
+        const minutes = Math.max(0, Math.ceil((lastSeen + 3 * 60 * 60 * 1000 - Date.now()) / 60000));
+        if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+        return `${minutes}m`;
+    };
+
     const formatCreatedAt = (value?: string | Date) => {
         if (!value) return null;
         const date = new Date(value);
@@ -452,49 +467,166 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
                     </div>
                 </div>
 
-                {/* Chain Visual Tree View */}
+                {/* Chain Visual Tree / List View */}
                 <div className="flex-1 overflow-auto py-6 px-4 scrollbar-hide min-h-[500px]">
-                    <div className={`sticky top-0 z-20 mb-2 flex justify-end gap-1.5 py-2 backdrop-blur ${isLightTheme ? 'bg-white/80' : 'bg-black/70'}`}>
-                        <button
-                            type="button"
-                            onClick={() => setZoom((value) => Math.max(0.5, Math.round((value - 0.1) * 10) / 10))}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-zinc-300 transition-colors hover:bg-white/10 hover:text-white"
-                            aria-label="Zoom out"
-                        >
-                            −
-                        </button>
-                        <span className="flex min-w-[52px] items-center justify-center rounded-lg border border-white/10 bg-white/5 px-2 text-xs font-semibold text-zinc-400">
-                            {Math.round(zoom * 100)}%
-                        </span>
-                        <button
-                            type="button"
-                            onClick={() => setZoom((value) => Math.min(1.6, Math.round((value + 0.1) * 10) / 10))}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-zinc-300 transition-colors hover:bg-white/10 hover:text-white"
-                            aria-label="Zoom in"
-                        >
-                            +
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setZoom(1)}
-                            className="rounded-lg border border-white/10 bg-white/5 px-3 text-xs font-semibold text-zinc-400 transition-colors hover:bg-white/10 hover:text-white"
-                        >
-                            Reset
-                        </button>
+                    <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleImageUpload}
+                        accept="image/*"
+                        className="hidden"
+                    />
+
+                    <div className={`sticky top-0 z-20 mb-3 flex items-center justify-between gap-2 py-2 backdrop-blur ${isLightTheme ? 'bg-white/85' : 'bg-black/75'}`}>
+                        <div className={`flex rounded-lg border p-1 ${isLightTheme ? 'border-black/10 bg-black/5' : 'border-white/10 bg-white/5'}`}>
+                            {(['tree', 'list'] as const).map((item) => (
+                                <button
+                                    key={item}
+                                    type="button"
+                                    onClick={() => setView(item)}
+                                    className={`rounded-md px-3 py-1.5 text-xs font-semibold capitalize transition-colors ${
+                                        view === item
+                                            ? isLightTheme
+                                                ? 'bg-white text-zinc-900 shadow-sm'
+                                                : 'bg-zinc-800 text-white shadow-md'
+                                            : isLightTheme
+                                                ? 'text-zinc-600 hover:text-zinc-900'
+                                                : 'text-zinc-500 hover:text-white'
+                                    }`}
+                                >
+                                    {item}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                            {view === 'tree' && (
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={() => setZoom((value) => Math.max(0.5, Math.round((value - 0.1) * 10) / 10))}
+                                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-zinc-300 transition-colors hover:bg-white/10 hover:text-white"
+                                        aria-label="Zoom out"
+                                    >
+                                        −
+                                    </button>
+                                    <span className="flex min-w-[52px] items-center justify-center rounded-lg border border-white/10 bg-white/5 px-2 text-xs font-semibold text-zinc-400">
+                                        {Math.round(zoom * 100)}%
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setZoom((value) => Math.min(1.6, Math.round((value + 0.1) * 10) / 10))}
+                                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-zinc-300 transition-colors hover:bg-white/10 hover:text-white"
+                                        aria-label="Zoom in"
+                                    >
+                                        +
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setZoom(1)}
+                                        className="rounded-lg border border-white/10 bg-white/5 px-3 text-xs font-semibold text-zinc-400 transition-colors hover:bg-white/10 hover:text-white"
+                                    >
+                                        Reset
+                                    </button>
+                                </>
+                            )}
+                        </div>
                     </div>
-                    <div
-                        className="flex min-w-max justify-center transition-transform duration-200"
-                        style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
-                    >
-                        <input
-                            type="file"
-                            ref={fileInputRef}
-                            onChange={handleImageUpload}
-                            accept="image/*"
-                            className="hidden"
-                        />
-                        {renderChainTree(null)}
-                    </div>
+
+                    {view === 'tree' ? (
+                        <div
+                            className="flex min-w-max justify-center transition-transform duration-200"
+                            style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
+                        >
+                            {renderChainTree(null)}
+                        </div>
+                    ) : (
+                        <div className="grid gap-3 md:grid-cols-2">
+                            {chain.members
+                                .slice()
+                                .sort((a: any, b: any) => Number(b.contributionTime || 0) - Number(a.contributionTime || 0))
+                                .map((member: any) => {
+                                    const isMe = member.userId === session?.user?.email;
+                                    const parent = chain.members.find((entry: any) => entry.userId === member.parentId);
+                                    const checkIn = getCheckInLabel(member);
+                                    const lastSeen = member.lastVisitAt || member.lastStartedAt;
+                                    const checkInUrgent = member.isWorking && lastSeen
+                                        ? (lastSeen + 3 * 60 * 60 * 1000 - Date.now()) / 60000 <= 30
+                                        : false;
+                                    const share = Math.min(100, Math.round((Number(member.contributionTime || 0) / maxContribution) * 100));
+                                    return (
+                                        <div
+                                            key={member.userId}
+                                            className={`rounded-2xl border p-4 transition-colors ${
+                                                isMe
+                                                    ? isLightTheme
+                                                        ? 'border-black/25 bg-black/[0.04]'
+                                                        : 'border-white/25 bg-white/[0.06]'
+                                                    : isLightTheme
+                                                        ? 'border-black/10 bg-white'
+                                                        : 'border-white/10 bg-white/[0.03]'
+                                            }`}
+                                        >
+                                            <div className="flex items-start gap-3">
+                                                <div className={`flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border text-base font-bold uppercase ${
+                                                    member.isWorking
+                                                        ? 'border-emerald-500/50 text-emerald-400'
+                                                        : 'border-white/10 text-zinc-400'
+                                                }`}>
+                                                    {member.image ? (
+                                                        // eslint-disable-next-line @next/next/no-img-element
+                                                        <img src={member.image} alt="" className="h-full w-full object-cover" />
+                                                    ) : (
+                                                        (member.name || '?').charAt(0)
+                                                    )}
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <p className={`truncate text-sm font-semibold ${isLightTheme ? 'text-zinc-900' : 'text-white'}`}>
+                                                            {member.name}
+                                                        </p>
+                                                        {isMe && (
+                                                            <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-400">
+                                                                You
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <p className={`mt-0.5 text-[10px] ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>
+                                                        {member.isWorking ? 'Working now' : 'Stopped'}
+                                                        {parent ? ` · added by ${parent.name}` : ' · starter'}
+                                                    </p>
+                                                    {checkIn && (
+                                                        <p className={`mt-1 text-[10px] font-semibold ${checkInUrgent ? 'text-red-400' : 'text-amber-400'}`}>
+                                                            check-in in {checkIn}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                                <span className={`font-mono text-sm font-semibold ${isLightTheme ? 'text-zinc-900' : 'text-zinc-200'}`}>
+                                                    {formatTime(member.contributionTime || 0)}
+                                                </span>
+                                            </div>
+                                            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                                                <div
+                                                    className={`h-full rounded-full ${member.isWorking ? 'bg-emerald-500' : 'bg-zinc-500'}`}
+                                                    style={{ width: `${share}%` }}
+                                                />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            {chain.status !== 'Burst' && myMemberInfo && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setSelectedParentId(session?.user?.email || null);
+                                        setIsAddMemberModalOpen(true);
+                                    }}
+                                    className="flex min-h-[96px] items-center justify-center gap-2 rounded-2xl border border-dashed border-white/15 text-sm font-semibold text-zinc-500 transition-colors hover:border-white/30 hover:text-white"
+                                >
+                                    + Add member
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Add Member Modal */}
