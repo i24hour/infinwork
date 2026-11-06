@@ -19,7 +19,7 @@ const PAGE_ITEMS: PaletteItem[] = [
     { id: 'page-chain', label: 'Chain', hint: 'Collaborative chains', group: 'Pages', href: '/ichain' },
     { id: 'page-ideas', label: 'Ideas', hint: 'Idea board', group: 'Pages', href: '/ideas' },
     { id: 'page-sf', label: 'SF Tracker', hint: 'Success / failure', group: 'Pages', href: '/sf-tracker' },
-    { id: 'page-rank', label: 'Rank Politician', hint: 'Cabinet focus ranking', group: 'Pages', href: '/rank-politician' },
+    { id: 'page-rank', label: 'Rank Politician', hint: 'Union + state focus ranking', group: 'Pages', href: '/rank-politician' },
     { id: 'page-profile', label: 'Profile', hint: 'Your portfolio', group: 'Pages', href: '/profile' },
     { id: 'page-settings', label: 'Settings', hint: 'Account and GitHub', group: 'Pages', href: '/settings' },
     { id: 'page-info', label: 'Rules & formulas', hint: 'How scoring works', group: 'Pages', href: '/info' },

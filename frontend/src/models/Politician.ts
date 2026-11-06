@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
-export type PoliticianScrapeStatus = 'never' | 'success' | 'error' | 'partial';
+export type PoliticianScrapeStatus = 'never' | 'success' | 'error' | 'partial' | 'unavailable';
+export type PoliticianLevel = 'union' | 'state';
 
 export interface IPoliticianStats {
     netScore: number;
@@ -22,10 +23,12 @@ export interface IPolitician {
     slug: string;
     party: string;
     state?: string;
+    level: PoliticianLevel;
+    office?: string;
     portfolio: string;
     portfolioTopics: string[];
-    xHandle: string;
-    xProfileUrl: string;
+    xHandle?: string;
+    xProfileUrl?: string;
     avatarUrl?: string;
     isActive: boolean;
     lastScrapedAt?: Date;
@@ -69,23 +72,30 @@ const PoliticianSchema = new mongoose.Schema<IPolitician>(
             trim: true,
         },
         party: { type: String, required: true, trim: true, index: true },
-        state: { type: String, trim: true },
+        state: { type: String, trim: true, index: true },
+        level: {
+            type: String,
+            enum: ['union', 'state'],
+            default: 'union',
+            index: true,
+        },
+        office: { type: String, trim: true },
         portfolio: { type: String, required: true, trim: true },
         portfolioTopics: [{ type: String, trim: true, lowercase: true }],
         xHandle: {
             type: String,
-            required: true,
             unique: true,
+            sparse: true,
             index: true,
             trim: true,
         },
-        xProfileUrl: { type: String, required: true, trim: true },
+        xProfileUrl: { type: String, trim: true },
         avatarUrl: { type: String, trim: true },
         isActive: { type: Boolean, default: true, index: true },
         lastScrapedAt: { type: Date },
         lastScrapeStatus: {
             type: String,
-            enum: ['never', 'success', 'error', 'partial'],
+            enum: ['never', 'success', 'error', 'partial', 'unavailable'],
             default: 'never',
         },
         lastScrapeError: { type: String },

@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { requireAdminSession } from '@/lib/admin';
-import { CABINET_MINISTER_COUNT } from '@/lib/rank-politician/seed';
+import {
+    STATE_MINISTER_COUNT,
+    TOTAL_POLITICIAN_COUNT,
+    UNION_CABINET_MINISTER_COUNT,
+} from '@/lib/rank-politician/seed';
 import { syncPoliticianSeeds } from '@/lib/rank-politician/seed-sync';
 
 export const dynamic = 'force-dynamic';
@@ -15,11 +19,16 @@ export async function POST() {
         const result = await syncPoliticianSeeds({ recomputeAllStats: true });
 
         return NextResponse.json({
-            message: `Seeded ${result.seeded} cabinet ministers; deactivated ${result.deactivated} non-cabinet profiles`,
-            upserted: result.seeded,
+            message: `Seeded ${result.inserted} new politicians (${UNION_CABINET_MINISTER_COUNT} Union + ${STATE_MINISTER_COUNT} state/UT); ${result.updated} updated`,
+            upserted: result.inserted,
+            updated: result.updated,
             deactivated: result.deactivated,
             handleResets: result.handleResets,
-            cabinetTarget: CABINET_MINISTER_COUNT,
+            cabinetTarget: UNION_CABINET_MINISTER_COUNT,
+            stateTarget: STATE_MINISTER_COUNT,
+            totalTarget: TOTAL_POLITICIAN_COUNT,
+            withXHandle: result.withXHandle,
+            withoutXHandle: result.withoutXHandle,
             totalActive: result.totalActive,
             totalInactive: result.totalInactive,
         });

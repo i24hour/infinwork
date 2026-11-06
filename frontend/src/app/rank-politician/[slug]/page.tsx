@@ -47,10 +47,12 @@ interface PoliticianDetail {
     slug: string;
     party: string;
     state: string | null;
+    level: 'union' | 'state';
+    office: string | null;
     portfolio: string;
     portfolioTopics: string[];
-    xHandle: string;
-    xProfileUrl: string;
+    xHandle: string | null;
+    xProfileUrl: string | null;
     avatarUrl: string | null;
     lastScrapeStatus: string;
     lastScrapedAt: string | null;
@@ -176,7 +178,7 @@ export default function RankPoliticianDetailPage() {
     const maxCategoryCount = Math.max(1, ...categoryBreakdown.map((item) => item.count));
 
     const scrapeThisPolitician = async () => {
-        if (!politician) return;
+        if (!politician?.xHandle) return;
         setScrapeLoading(true);
         setActionMessage(null);
         try {
@@ -245,32 +247,48 @@ export default function RankPoliticianDetailPage() {
                                             {politician.party}
                                         </span>
                                         <span
+                                            className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                                                politician.level === 'state'
+                                                    ? 'border-violet-500/30 bg-violet-500/10 text-violet-300'
+                                                    : 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300'
+                                            }`}
+                                        >
+                                            {politician.level === 'state' ? 'State' : 'Union'}
+                                        </span>
+                                        <span
                                             className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-wide ${scrapeStatusClass(politician.lastScrapeStatus)}`}
                                         >
                                             {scrapeStatusLabel(politician.lastScrapeStatus)}
                                         </span>
                                     </div>
                                     <p className={`text-xl font-semibold ${heading}`}>
-                                        {politician.portfolio}
+                                        {politician.office || politician.portfolio}
                                     </p>
+                                    <p className={muted}>{politician.portfolio}</p>
                                     <p className={muted}>
                                         {politician.state || 'India'}
                                     </p>
                                     <div className="flex flex-wrap items-center gap-3 text-sm">
-                                        <a
-                                            href={politician.xProfileUrl}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="text-zinc-300 hover:text-white underline underline-offset-2"
-                                        >
-                                            @{politician.xHandle}
-                                        </a>
-                                        <span className={muted}>
-                                            Last scrape: {formatRelativeTime(politician.lastScrapedAt)}
-                                            {typeof politician.lastScrapePostCount === 'number'
-                                                ? ` · ${politician.lastScrapePostCount} posts`
-                                                : ''}
-                                        </span>
+                                        {politician.xHandle && politician.xProfileUrl ? (
+                                            <a
+                                                href={politician.xProfileUrl}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="text-zinc-300 hover:text-white underline underline-offset-2"
+                                            >
+                                                @{politician.xHandle}
+                                            </a>
+                                        ) : (
+                                            <span className={muted}>No public X handle</span>
+                                        )}
+                                        {politician.xHandle && (
+                                            <span className={muted}>
+                                                Last scrape: {formatRelativeTime(politician.lastScrapedAt)}
+                                                {typeof politician.lastScrapePostCount === 'number'
+                                                    ? ` · ${politician.lastScrapePostCount} posts`
+                                                    : ''}
+                                            </span>
+                                        )}
                                         <span className={muted}>
                                             {politician.windowDays ?? RANK_POLITICIAN_SCORE_WINDOW_DAYS}-day scoring window
                                         </span>
@@ -287,7 +305,7 @@ export default function RankPoliticianDetailPage() {
                                     >
                                         Copy link
                                     </button>
-                                    {isAdmin && (
+                                    {isAdmin && politician.xHandle && (
                                         <LiquidButton
                                             className="text-white"
                                             disabled={scrapeLoading}
@@ -302,6 +320,13 @@ export default function RankPoliticianDetailPage() {
                             {actionMessage && (
                                 <div className={`${panel} px-4 py-3 text-sm text-zinc-300`}>
                                     {actionMessage}
+                                </div>
+                            )}
+
+                            {politician.lastScrapeStatus === 'unavailable' && (
+                                <div className="rounded-2xl border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-300">
+                                    No public X handle is linked for this minister, so there are no
+                                    scored posts yet.
                                 </div>
                             )}
 
@@ -349,7 +374,9 @@ export default function RankPoliticianDetailPage() {
                                     <p className={`text-sm ${muted}`}>
                                         No scored posts in the last{' '}
                                         {politician.windowDays ?? RANK_POLITICIAN_SCORE_WINDOW_DAYS} days.
-                                        Scrape this profile to populate categories.
+                                        {politician.xHandle
+                                            ? ' Scrape this profile to populate categories.'
+                                            : ' No public X handle is linked.'}
                                     </p>
                                 ) : (
                                     <div className="space-y-3">
@@ -426,11 +453,14 @@ export default function RankPoliticianDetailPage() {
                                 {posts.length === 0 ? (
                                     <div className={`${panel} p-6 space-y-3`}>
                                         <p className={muted}>
-                                            No posts from the last{' '}
-                                            {politician.windowDays ?? RANK_POLITICIAN_SCORE_WINDOW_DAYS} days.
-                                            Wait for the cron, or scrape this profile if you&apos;re an admin.
+                                            {politician.xHandle
+                                                ? `No posts from the last ${
+                                                      politician.windowDays ??
+                                                      RANK_POLITICIAN_SCORE_WINDOW_DAYS
+                                                  } days. Wait for the cron, or scrape this profile if you're an admin.`
+                                                : 'No public X handle is linked for this minister, so there are no posts to score.'}
                                         </p>
-                                        {isAdmin && (
+                                        {isAdmin && politician.xHandle && (
                                             <LiquidButton
                                                 className="text-white"
                                                 disabled={scrapeLoading}

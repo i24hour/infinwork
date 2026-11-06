@@ -1,23 +1,81 @@
+import stateMinisterRows from './state-seed.json';
+
+/**
+ * State/UT roster snapshot sourced from public council-of-ministers pages
+ * (rankyourpolitician open dataset, Sep 2026). X handles are only populated
+ * when a verified public handle is known; everyone else is listed as
+ * `unavailable` rather than guessed.
+ */
+
+export type PoliticianLevel = 'union' | 'state';
+
 export interface PoliticianSeed {
     name: string;
     slug: string;
     party: string;
     state?: string;
+    level?: PoliticianLevel;
+    office?: string;
     portfolio: string;
     portfolioTopics: string[];
-    xHandle: string;
+    xHandle?: string;
+    avatarUrl?: string;
 }
+
+interface StateMinisterRow {
+    id: string;
+    name: string;
+    party: string;
+    state: string;
+    rank: 'CM' | 'DyCM' | 'Cabinet' | 'MoS';
+    office: string;
+    portfolios: string[];
+    xHandle?: string;
+    avatarUrl?: string;
+}
+
+const STATE_MINISTER_ROWS = stateMinisterRows as StateMinisterRow[];
 
 function handleUrl(handle: string): string {
     return `https://x.com/${handle.replace(/^@/, '')}`;
 }
 
+function topicsFromPortfolios(portfolios: string[], rank: string): string[] {
+    const topics = new Set<string>();
+    for (const portfolio of portfolios) {
+        for (const part of portfolio.split(/[&/,;]|\band\b/gi)) {
+            const topic = part.trim().toLowerCase().replace(/\s+/g, ' ');
+            if (topic.length >= 3 && !topic.startsWith('all ')) {
+                topics.add(topic);
+            }
+        }
+    }
+    if (topics.size === 0) topics.add(rank.toLowerCase());
+    return Array.from(topics).slice(0, 40);
+}
+
+function toStateSeed(row: StateMinisterRow): PoliticianSeed {
+    const xHandle = String(row.xHandle || '').replace(/^@/, '').trim() || undefined;
+    return {
+        name: row.name,
+        slug: row.id,
+        party: row.party,
+        state: row.state,
+        level: 'state',
+        office: row.office,
+        portfolio: row.portfolios.length > 0 ? row.portfolios.join(' / ') : row.office,
+        portfolioTopics: topicsFromPortfolios(row.portfolios, row.rank),
+        xHandle,
+        avatarUrl: row.avatarUrl,
+    };
+}
+
 /**
- * Union Cabinet Ministers only (incl. PM) — Modi 3.0.
- * Opposition / CMs / MoS are intentionally excluded for now.
+ * Union Cabinet Ministers (incl. PM) — Modi 3.0.
+ * State/UT councils of ministers are merged in from `state-seed.json`.
  * Source shape: Cabinet Secretariat / Third Modi ministry (cabinet rank).
  */
-export const POLITICIAN_SEEDS: PoliticianSeed[] = [
+const UNION_CABINET_SEEDS: PoliticianSeed[] = [
     {
         name: 'Narendra Modi',
         slug: 'narendra-modi',
@@ -369,22 +427,42 @@ export const POLITICIAN_SEEDS: PoliticianSeed[] = [
     },
 ];
 
-/** Cabinet-only active set size (PM + Cabinet Ministers). */
-export const CABINET_MINISTER_COUNT = POLITICIAN_SEEDS.length;
+export const UNION_CABINET_MINISTER_COUNT = UNION_CABINET_SEEDS.length;
+export const STATE_MINISTER_COUNT = STATE_MINISTER_ROWS.length;
+export const TOTAL_POLITICIAN_COUNT = UNION_CABINET_MINISTER_COUNT + STATE_MINISTER_COUNT;
+
+/** Union Cabinet (PM + 30 ministers) plus every state/UT council of ministers. */
+export const POLITICIAN_SEEDS: PoliticianSeed[] = [
+    ...UNION_CABINET_SEEDS.map((seed) => ({
+        ...seed,
+        level: 'union' as const,
+        office: 'Union Cabinet Minister',
+    })),
+    ...STATE_MINISTER_ROWS.map(toStateSeed),
+];
+
+/** Kept for the admin seed response; this is the Union Cabinet target. */
+export const CABINET_MINISTER_COUNT = UNION_CABINET_MINISTER_COUNT;
 
 export function toPoliticianDocument(seed: PoliticianSeed) {
-    const xHandle = seed.xHandle.replace(/^@/, '');
+    const xHandle = String(seed.xHandle || '').replace(/^@/, '').trim();
+    const hasHandle = Boolean(xHandle);
+    const level = seed.level || 'union';
     return {
         name: seed.name,
         slug: seed.slug,
         party: seed.party,
         state: seed.state,
+        level,
+        office: seed.office || (level === 'state' ? 'State Minister' : 'Union Cabinet Minister'),
         portfolio: seed.portfolio,
         portfolioTopics: seed.portfolioTopics.map((t) => t.toLowerCase()),
-        xHandle,
-        xProfileUrl: handleUrl(xHandle),
+        xHandle: hasHandle ? xHandle : undefined,
+        xProfileUrl: hasHandle ? handleUrl(xHandle) : '',
+        avatarUrl: seed.avatarUrl,
         isActive: true,
-        lastScrapeStatus: 'never' as const,
+        lastScrapeStatus: hasHandle ? ('never' as const) : ('unavailable' as const),
+        lastScrapeError: hasHandle ? undefined : 'No public X handle on record',
         stats: {
             netScore: 0,
             onPortfolioPct: 0,

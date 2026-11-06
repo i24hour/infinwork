@@ -1,4 +1,4 @@
-export type ScrapeStatus = 'never' | 'success' | 'error' | 'partial';
+export type ScrapeStatus = 'never' | 'success' | 'error' | 'partial' | 'unavailable';
 
 export function scrapeStatusLabel(status?: string | null): string {
     switch (status) {
@@ -8,6 +8,8 @@ export function scrapeStatusLabel(status?: string | null): string {
             return 'Scrape failed';
         case 'partial':
             return 'Partial';
+        case 'unavailable':
+            return 'No X account';
         case 'never':
         default:
             return 'Not scraped';
@@ -22,6 +24,8 @@ export function scrapeStatusClass(status?: string | null): string {
             return 'border-red-500/30 text-red-400 bg-red-500/10';
         case 'partial':
             return 'border-amber-500/30 text-amber-400 bg-amber-500/10';
+        case 'unavailable':
+            return 'border-sky-500/30 text-sky-300 bg-sky-500/10';
         case 'never':
         default:
             return 'border-white/10 text-zinc-400 bg-white/5';

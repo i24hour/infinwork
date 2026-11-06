@@ -50,9 +50,11 @@ interface PoliticianRow {
     slug: string;
     party: string;
     state: string | null;
+    level: 'union' | 'state';
+    office: string | null;
     portfolio: string;
-    xHandle: string;
-    xProfileUrl: string;
+    xHandle: string | null;
+    xProfileUrl: string | null;
     avatarUrl: string | null;
     lastScrapedAt: string | null;
     lastScrapeStatus: string;
@@ -65,22 +67,35 @@ interface PoliticianRow {
         postCount: number;
         scoredPostCount?: number;
     };
-    rank: number;
+    rank: number | null;
 }
 
 interface LeaderboardMeta {
     totalActive: number;
+    unionActive?: number;
+    stateActive?: number;
+    withXHandle?: number;
     withPosts: number;
     scrapeSuccess: number;
     scrapePartial?: number;
     scrapeError: number;
+    scrapeUnavailable?: number;
     neverScraped: number;
     avgOnPortfolioPct: number;
     windowDays?: number;
 }
 
 type SortBy = 'onPortfolioPct' | 'netScore';
-type ScrapeFilter = 'all' | 'never' | 'success' | 'error' | 'partial';
+type ScrapeFilter = 'all' | 'never' | 'success' | 'error' | 'partial' | 'unavailable';
+type LevelFilter = 'all' | 'union' | 'state';
+
+const PAGE_SIZE = 50;
+
+function levelBadgeClass(level: string): string {
+    return level === 'state'
+        ? 'border-violet-500/30 bg-violet-500/10 text-violet-300'
+        : 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300';
+}
 
 export default function RankPoliticianPage() {
     const isLightTheme = useIsLightTheme();
@@ -90,6 +105,7 @@ export default function RankPoliticianPage() {
     const initialCached = getCachedData<{
         politicians?: PoliticianRow[];
         parties?: string[];
+        states?: string[];
         meta?: LeaderboardMeta | null;
     }>(defaultCacheKey);
     const initialSettings = getCachedData<{ isAdmin?: boolean }>('/api/user/settings');
@@ -102,9 +118,13 @@ export default function RankPoliticianPage() {
     const [politicians, setPoliticians] = useState<PoliticianRow[]>(() => initialCached?.politicians || []);
     const [meta, setMeta] = useState<LeaderboardMeta | null>(() => initialCached?.meta || null);
     const [parties, setParties] = useState<string[]>(() => initialCached?.parties || []);
+    const [states, setStates] = useState<string[]>(() => initialCached?.states || []);
     const [party, setParty] = useState('all');
+    const [level, setLevel] = useState<LevelFilter>('all');
+    const [stateFilter, setStateFilter] = useState('all');
     const [scrapeStatus, setScrapeStatus] = useState<ScrapeFilter>('all');
     const [sortBy, setSortBy] = useState<SortBy>('onPortfolioPct');
+    const [page, setPage] = useState(1);
     const [searchInput, setSearchInput] = useState('');
     const [q, setQ] = useState('');
     const [loading, setLoading] = useState<boolean>(() => !initialCached);
@@ -158,6 +178,8 @@ export default function RankPoliticianPage() {
             setError(null);
             const params = new URLSearchParams({ sortBy });
             if (party !== 'all') params.set('party', party);
+            if (level !== 'all') params.set('level', level);
+            if (stateFilter !== 'all') params.set('state', stateFilter);
             if (scrapeStatus !== 'all') params.set('scrapeStatus', scrapeStatus);
             if (q) params.set('q', q);
 
@@ -165,11 +187,13 @@ export default function RankPoliticianPage() {
             const cachedForQuery = getCachedData<{
                 politicians?: PoliticianRow[];
                 parties?: string[];
+                states?: string[];
                 meta?: LeaderboardMeta | null;
             }>(url);
             if (cachedForQuery && !force) {
                 setPoliticians(cachedForQuery.politicians || []);
                 setParties(cachedForQuery.parties || []);
+                setStates(cachedForQuery.states || []);
                 setMeta(cachedForQuery.meta || null);
                 setLoading(false);
             }
@@ -177,10 +201,12 @@ export default function RankPoliticianPage() {
             const data = await fetchWithCache<{
                 politicians?: PoliticianRow[];
                 parties?: string[];
+                states?: string[];
                 meta?: LeaderboardMeta | null;
             }>(url, { dedupingIntervalMs: 5000, force });
             setPoliticians(data.politicians || []);
             setParties(data.parties || []);
+            setStates(data.states || []);
             setMeta(data.meta || null);
         } catch (err: unknown) {
             console.error('Error fetching rank-politician:', err);
@@ -189,11 +215,13 @@ export default function RankPoliticianPage() {
         } finally {
             setLoading(false);
         }
-    }, [party, q, scrapeStatus, sortBy]);
+    }, [level, party, q, scrapeStatus, sortBy, stateFilter]);
 
     useEffect(() => {
         const params = new URLSearchParams({ sortBy });
         if (party !== 'all') params.set('party', party);
+        if (level !== 'all') params.set('level', level);
+        if (stateFilter !== 'all') params.set('state', stateFilter);
         if (scrapeStatus !== 'all') params.set('scrapeStatus', scrapeStatus);
         if (q) params.set('q', q);
         const url = `/api/rank-politician?${params.toString()}`;
@@ -201,12 +229,24 @@ export default function RankPoliticianPage() {
             setLoading(true);
         }
         fetchLeaderboard();
-    }, [fetchLeaderboard, party, q, scrapeStatus, sortBy]);
+    }, [fetchLeaderboard, level, party, q, scrapeStatus, sortBy, stateFilter]);
 
-    const hasActiveFilters = party !== 'all' || scrapeStatus !== 'all' || Boolean(q) || sortBy !== 'onPortfolioPct';
+    useEffect(() => {
+        setPage(1);
+    }, [level, party, q, scrapeStatus, sortBy, stateFilter]);
+
+    const hasActiveFilters =
+        party !== 'all' ||
+        level !== 'all' ||
+        stateFilter !== 'all' ||
+        scrapeStatus !== 'all' ||
+        Boolean(q) ||
+        sortBy !== 'onPortfolioPct';
 
     const clearFilters = () => {
         setParty('all');
+        setLevel('all');
+        setStateFilter('all');
         setScrapeStatus('all');
         setSortBy('onPortfolioPct');
         setSearchInput('');
@@ -256,13 +296,20 @@ export default function RankPoliticianPage() {
 
     const emptyHint = useMemo(() => {
         if ((meta?.totalActive || 0) === 0) {
-            return 'No politicians in the database yet. Seed the starter list to begin.';
+            return 'No politicians in the database yet. Seed the politician list to begin.';
         }
         if (hasActiveFilters) {
             return 'No politicians match these filters. Clear filters to see the full list.';
         }
         return 'No politicians to show.';
     }, [hasActiveFilters, meta?.totalActive]);
+
+    const totalPages = Math.max(1, Math.ceil(politicians.length / PAGE_SIZE));
+    const currentPage = Math.min(page, totalPages);
+    const visiblePoliticians = politicians.slice(
+        (currentPage - 1) * PAGE_SIZE,
+        currentPage * PAGE_SIZE
+    );
 
     const muted = isLightTheme ? 'text-zinc-700' : 'text-zinc-400';
     const heading = isLightTheme ? 'text-zinc-900' : 'text-white';
@@ -279,9 +326,10 @@ export default function RankPoliticianPage() {
                                 Rank Politician
                             </h1>
                             <p className={muted}>
-                                Union Cabinet ministers only (incl. PM), ranked by how focused their
-                                public posts are on assigned departments over the last{' '}
-                                {RANK_POLITICIAN_SCORE_WINDOW_DAYS} days.
+                                Union Cabinet and state/UT council ministers, ranked by how focused
+                                their public posts are on assigned portfolios over the last{' '}
+                                {RANK_POLITICIAN_SCORE_WINDOW_DAYS} days. Ministers without a public
+                                X account are listed but unranked.
                             </p>
                         </div>
                         <div className="flex flex-wrap gap-2">
@@ -327,10 +375,16 @@ export default function RankPoliticianPage() {
                             <p className={`text-3xl font-semibold ${heading}`}>
                                 {meta?.totalActive ?? politicians.length}
                             </p>
+                            <p className={`text-xs mt-1 ${muted}`}>
+                                {meta?.unionActive ?? 0} Union · {meta?.stateActive ?? 0} State
+                            </p>
                         </div>
                         <div className={`${panel} p-5`}>
                             <h3 className={`text-sm font-medium mb-2 ${muted}`}>With posts</h3>
                             <p className={`text-3xl font-semibold ${heading}`}>{meta?.withPosts ?? 0}</p>
+                            <p className={`text-xs mt-1 ${muted}`}>
+                                {meta?.withXHandle ?? 0} have X accounts
+                            </p>
                         </div>
                         <div className={`${panel} p-5`}>
                             <h3 className={`text-sm font-medium mb-2 ${muted}`}>Avg on-portfolio</h3>
@@ -342,19 +396,41 @@ export default function RankPoliticianPage() {
                             <h3 className={`text-sm font-medium mb-2 ${muted}`}>Scrape health</h3>
                             <p className={`text-sm font-medium ${heading}`}>
                                 {meta?.scrapeSuccess ?? 0} ok · {meta?.scrapePartial ?? 0} partial ·{' '}
-                                {meta?.scrapeError ?? 0} fail · {meta?.neverScraped ?? 0} pending
+                                {meta?.scrapeError ?? 0} fail · {meta?.scrapeUnavailable ?? 0} no X ·{' '}
+                                {meta?.neverScraped ?? 0} pending
                             </p>
                         </div>
                     </div>
 
                     <div className="flex flex-col gap-3 max-w-4xl">
-                        <div className="flex flex-col sm:flex-row gap-3">
+                        <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3">
                             <input
                                 value={searchInput}
                                 onChange={(e) => setSearchInput(e.target.value)}
-                                placeholder="Search name, portfolio, handle..."
-                                className="flex-1 rounded-xl bg-black border border-white/10 px-4 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-white/30"
+                                placeholder="Search name, portfolio, office, state..."
+                                className="flex-1 min-w-[220px] rounded-xl bg-black border border-white/10 px-4 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-white/30"
                             />
+                            <select
+                                value={level}
+                                onChange={(e) => setLevel(e.target.value as LevelFilter)}
+                                className="rounded-xl bg-black border border-white/10 px-4 py-2.5 text-sm text-white focus:outline-none focus:border-white/30"
+                            >
+                                <option value="all">All levels</option>
+                                <option value="union">Union Cabinet</option>
+                                <option value="state">State Governments</option>
+                            </select>
+                            <select
+                                value={stateFilter}
+                                onChange={(e) => setStateFilter(e.target.value)}
+                                className="rounded-xl bg-black border border-white/10 px-4 py-2.5 text-sm text-white focus:outline-none focus:border-white/30"
+                            >
+                                <option value="all">All states/UTs</option>
+                                {states.map((s) => (
+                                    <option key={s} value={s}>
+                                        {s}
+                                    </option>
+                                ))}
+                            </select>
                             <select
                                 value={party}
                                 onChange={(e) => setParty(e.target.value)}
@@ -377,6 +453,7 @@ export default function RankPoliticianPage() {
                                 <option value="partial">Partial</option>
                                 <option value="error">Failed</option>
                                 <option value="never">Not scraped</option>
+                                <option value="unavailable">No X account</option>
                             </select>
                             <select
                                 value={sortBy}
@@ -420,7 +497,7 @@ export default function RankPoliticianPage() {
                                         disabled={actionLoading !== null}
                                         onClick={() => runAdminAction('seed')}
                                     >
-                                        {actionLoading === 'seed' ? 'Seeding…' : 'Seed starter politicians'}
+                                        {actionLoading === 'seed' ? 'Seeding…' : 'Seed politicians'}
                                     </LiquidButton>
                                 )}
                                 {hasActiveFilters && (
@@ -435,9 +512,11 @@ export default function RankPoliticianPage() {
                         ) : (
                             <div className="flex flex-col gap-4 max-w-4xl">
                                 <p className={`text-sm ${muted}`}>
-                                    Showing {politicians.length} politician{politicians.length === 1 ? '' : 's'}
+                                    Showing {(currentPage - 1) * PAGE_SIZE + 1}–
+                                    {Math.min(currentPage * PAGE_SIZE, politicians.length)} of{' '}
+                                    {politicians.length} politician{politicians.length === 1 ? '' : 's'}
                                 </p>
-                                {politicians.map((politician) => {
+                                {visiblePoliticians.map((politician) => {
                                     const pct = politician.stats?.onPortfolioPct ?? 0;
                                     const net = politician.stats?.netScore ?? 0;
                                     const scorePositive = net >= 0;
@@ -457,8 +536,8 @@ export default function RankPoliticianPage() {
                                                 className={`${panel} p-4 flex flex-col md:flex-row md:items-center gap-4 hover:border-zinc-700 transition-colors cursor-pointer group w-full`}
                                             >
                                                 <div className="flex items-center gap-4 flex-1 min-w-0 md:max-w-[360px]">
-                                                    <div className={`flex h-8 w-8 shrink-0 flex-col items-center justify-center rounded-lg border text-sm font-bold ${rankBadgeClass(politician.rank)}`}>
-                                                        #{politician.rank}
+                                                    <div className={`flex h-8 w-8 shrink-0 flex-col items-center justify-center rounded-lg border text-sm font-bold ${rankBadgeClass(politician.rank || 0)}`}>
+                                                        {politician.rank ? `#${politician.rank}` : '—'}
                                                     </div>
                                                     <div className="w-12 h-12 rounded-full bg-white/10 flex shrink-0 items-center justify-center text-white font-bold text-xl uppercase ring-1 ring-white/20 overflow-hidden">
                                                         {politician.avatarUrl ? (
@@ -479,6 +558,9 @@ export default function RankPoliticianPage() {
                                                             <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${partyClass(politician.party)}`}>
                                                                 {politician.party}
                                                             </span>
+                                                            <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${levelBadgeClass(politician.level)}`}>
+                                                                {politician.level === 'state' ? 'State' : 'Union'}
+                                                            </span>
                                                             <span
                                                                 className={`shrink-0 text-[10px] uppercase tracking-wide px-2 py-0.5 rounded border ${scrapeStatusClass(politician.lastScrapeStatus)}`}
                                                             >
@@ -486,17 +568,24 @@ export default function RankPoliticianPage() {
                                                             </span>
                                                         </div>
                                                         <p className={`text-sm font-medium truncate mt-0.5 ${heading}`}>
+                                                            {politician.office ? `${politician.office} · ` : ''}
                                                             {politician.portfolio}
                                                         </p>
                                                         <p className={`text-xs truncate mt-0.5 ${muted}`}>
                                                             {politician.party}
                                                             {politician.state ? ` · ${politician.state}` : ''}
-                                                            {' · '}@{politician.xHandle}
-                                                            {' · '}
-                                                            {formatRelativeTime(politician.lastScrapedAt)}
-                                                            {typeof politician.lastScrapePostCount === 'number'
-                                                                ? ` · ${politician.lastScrapePostCount} posts last scrape`
-                                                                : ''}
+                                                            {politician.xHandle ? (
+                                                                <>
+                                                                    {' · '}@{politician.xHandle}
+                                                                    {' · '}
+                                                                    {formatRelativeTime(politician.lastScrapedAt)}
+                                                                    {typeof politician.lastScrapePostCount === 'number'
+                                                                        ? ` · ${politician.lastScrapePostCount} posts last scrape`
+                                                                        : ''}
+                                                                </>
+                                                            ) : (
+                                                                ' · No public X handle'
+                                                            )}
                                                         </p>
                                                     </div>
                                                 </div>
@@ -551,6 +640,31 @@ export default function RankPoliticianPage() {
                                         </Link>
                                     );
                                 })}
+                                {totalPages > 1 && (
+                                    <div className="flex items-center justify-between gap-3 pt-2">
+                                        <button
+                                            type="button"
+                                            disabled={currentPage === 1}
+                                            onClick={() => setPage((value) => Math.max(1, value - 1))}
+                                            className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-zinc-300 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                        >
+                                            Previous
+                                        </button>
+                                        <span className={`text-sm ${muted}`}>
+                                            Page {currentPage} of {totalPages}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            disabled={currentPage === totalPages}
+                                            onClick={() =>
+                                                setPage((value) => Math.min(totalPages, value + 1))
+                                            }
+                                            className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-zinc-300 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                        >
+                                            Next
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>

@@ -66,6 +66,8 @@ function scrapePriority(status?: string | null): number {
             return 2;
         case 'success':
             return 3;
+        case 'unavailable':
+            return 4;
         default:
             return 0;
     }
@@ -265,15 +267,19 @@ async function fetchPoliticianCandidatesWithFallback(
     options: { allowFirecrawl?: boolean } = {}
 ): Promise<{ candidates: ScrapedPostCandidate[]; provider: ScrapeProviderName }> {
     const errors: string[] = [];
+    const handle = String(politician.xHandle || '').replace(/^@/, '').trim();
+    if (!handle) throw new Error('No public X handle on record');
+    const profileUrl =
+        politician.xProfileUrl || `https://x.com/${handle}`;
 
     // Tier 1: Jina Reader (free, zero credits). Retry once on a
     // network/HTTP failure; a valid response with 0 posts is not retried
     // because the page itself did not contain status posts.
     for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-            const jinaScraped = await scrapeXProfileWithJina(politician.xProfileUrl);
+            const jinaScraped = await scrapeXProfileWithJina(profileUrl);
             const jinaCandidates = parsePostsFromFirecrawl(
-                politician.xHandle,
+                handle,
                 jinaScraped.markdown,
                 jinaScraped.links
             );
@@ -294,9 +300,7 @@ async function fetchPoliticianCandidatesWithFallback(
     // Tier 2: X's public embedded-timeline endpoint. No key, no credits, and
     // it returns authored tweets rather than news headlines.
     try {
-        const syndicationCandidates = await scrapeXProfileWithSyndication(
-            politician.xHandle
-        );
+        const syndicationCandidates = await scrapeXProfileWithSyndication(handle);
         if (syndicationCandidates.length > 0) {
             return { candidates: syndicationCandidates, provider: 'x-syndication' };
         }
@@ -308,9 +312,9 @@ async function fetchPoliticianCandidatesWithFallback(
     // Tier 3: Firecrawl (optional if configured and allowed)
     if (options.allowFirecrawl && process.env.FIRECRAWL_API_KEY) {
         try {
-            const fcScraped = await scrapeXProfileWithFirecrawl(politician.xProfileUrl);
+            const fcScraped = await scrapeXProfileWithFirecrawl(profileUrl);
             const fcCandidates = parsePostsFromFirecrawl(
-                politician.xHandle,
+                handle,
                 fcScraped.markdown,
                 fcScraped.links
             );
@@ -336,11 +340,17 @@ export async function scrapeAndScorePolitician(
 ): Promise<PoliticianScrapeSummary> {
     const summary: PoliticianScrapeSummary = {
         slug: politician.slug,
-        xHandle: politician.xHandle,
+        xHandle: politician.xHandle || '',
         status: 'success',
         postsFound: 0,
         postsUpserted: 0,
     };
+
+    if (!politician.xHandle) {
+        summary.status = 'skipped';
+        summary.error = 'No public X handle on record';
+        return summary;
+    }
 
     try {
         const { candidates, provider } = await fetchPoliticianCandidatesWithFallback(
@@ -439,7 +449,10 @@ export async function runRankPoliticianScrapeBatch(
         creditsRemaining !== null &&
         creditsRemaining >= MIN_FIRECRAWL_CREDITS;
 
-    const filter: Record<string, unknown> = { isActive: true };
+    const filter: Record<string, unknown> = {
+        isActive: true,
+        xHandle: { $exists: true, $nin: [null, ''] },
+    };
     if (options.slugs?.length) {
         filter.slug = { $in: options.slugs.map((s) => s.toLowerCase()) };
     }
