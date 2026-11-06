@@ -181,7 +181,21 @@ export async function pruneOldPoliticianPosts(
             { postedAt: null, createdAt: { $lt: cutoff } },
         ],
     });
-    return result.deletedCount || 0;
+
+    // Also remove legacy/profile-shell rows. They can never be scored, and
+    // leaving them in the collection inflates scrape counts and storage.
+    const invalidResult = await PoliticianPost.deleteMany({
+        $nor: [
+            {
+                postUrl: {
+                    $regex: '(?:x\\.com|twitter\\.com)\\/[^/]+\\/status\\/\\d+',
+                    $options: 'i',
+                },
+            },
+        ],
+    });
+
+    return (result.deletedCount || 0) + (invalidResult.deletedCount || 0);
 }
 
 async function classifyCandidate(

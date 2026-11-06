@@ -128,14 +128,6 @@ function isNoiseLine(line: string): boolean {
     return false;
 }
 
-function hashText(text: string): string {
-    let hash = 0;
-    for (let i = 0; i < text.length; i++) {
-        hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
-    }
-    return hash.toString(16);
-}
-
 function parsePostedAt(block: string, statusId?: string): Date | undefined {
     const match = block.match(/Posted:\s*([^\n]+)/i);
     if (match) {
@@ -229,28 +221,6 @@ function parseJinaBulletPosts(
                     rawMarkdown: bullet.slice(0, 2500),
                 });
                 continue;
-            }
-        }
-
-        // Handle Jina bullets where X didn't attach the status permalink (e.g., video/pinned posts with avatar link)
-        const avatarPrefixRe = new RegExp(
-            `\\[!\\[Image[^\\]]*\\]\\([^)]+\\)\\]\\(https?:\\/\\/(?:www\\.)?(?:x\\.com|twitter\\.com)\\/${normalizedHandle}\\)`,
-            'i'
-        );
-        const avatarMatch = bullet.match(avatarPrefixRe);
-        if (avatarMatch && avatarMatch.index !== undefined) {
-            const afterAvatar = bullet.slice(avatarMatch.index + avatarMatch[0].length);
-            const cleaned = cleanPostText(afterAvatar);
-            if (cleaned.length >= 20 && !isNoiseLine(cleaned)) {
-                const externalId = `x:${normalizedHandle}:block:${hashText(cleaned)}`;
-                if (!candidates.has(externalId)) {
-                    candidates.set(externalId, {
-                        externalId,
-                        text: cleaned.slice(0, 4000),
-                        postUrl: `https://x.com/${normalizedHandle}`,
-                        rawMarkdown: bullet.slice(0, 2500),
-                    });
-                }
             }
         }
     }
@@ -480,6 +450,9 @@ export async function scrapeXProfileWithSyndication(
 
             const text = String(tweet?.full_text || tweet?.text || '').trim();
             if (text.length < 16) continue;
+            // Retweets are not authored posts. Skip them just like the
+            // status-link parser does.
+            if (/^RT\s+@/i.test(text) || tweet?.retweeted_status) continue;
 
             const postedAt = new Date(String(tweet?.created_at || ''));
             candidates.push({
