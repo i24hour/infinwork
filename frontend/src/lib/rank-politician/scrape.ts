@@ -392,6 +392,55 @@ export async function scrapeXProfileWithJina(
 }
 
 /**
+ * Fetch the public syndication HTML directly, then through Jina Reader if the
+ * direct request is rate-limited. X rate-limits the direct endpoint by IP, and
+ * serverless egress IPs are shared, so the Jina hop keeps this fallback usable.
+ */
+async function fetchSyndicationHtml(url: string): Promise<string> {
+    const headers = {
+        Accept: 'text/html',
+        'User-Agent': 'Mozilla/5.0 (compatible; InfinworkBot/1.0)',
+    };
+
+    const directController = new AbortController();
+    const directTimeout = setTimeout(() => directController.abort(), 15000);
+    try {
+        const response = await fetch(url, {
+            headers,
+            cache: 'no-store',
+            signal: directController.signal,
+        });
+        if (response.ok) {
+            const html = await response.text();
+            if (html.includes('__NEXT_DATA__')) return html;
+        }
+    } catch {
+        // Fall through to the Jina hop below.
+    } finally {
+        clearTimeout(directTimeout);
+    }
+
+    const proxyController = new AbortController();
+    const proxyTimeout = setTimeout(() => proxyController.abort(), DEFAULT_TIMEOUT_MS);
+    try {
+        const response = await fetch(`${JINA_READER_BASE_URL}${url}`, {
+            headers: {
+                ...headers,
+                'X-Return-Format': 'html',
+            },
+            cache: 'no-store',
+            signal: proxyController.signal,
+        });
+        if (!response.ok) {
+            throw new Error(`X syndication proxy failed (${response.status})`);
+        }
+        return await response.text();
+    } finally {
+        clearTimeout(proxyTimeout);
+    }
+}
+
+/**
  * Free fallback that reads X's public embedded-timeline data. It returns the
  * recent authored tweets (not profile chrome or news) and needs no API key.
  * X can change this endpoint without notice, so it is used only after Jina
@@ -403,71 +452,52 @@ export async function scrapeXProfileWithSyndication(
     const normalizedHandle = handle.replace(/^@/, '').trim();
     if (!normalizedHandle) return [];
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+    const html = await fetchSyndicationHtml(
+        `${X_SYNDICATION_BASE_URL}${encodeURIComponent(normalizedHandle)}`
+    );
 
-    try {
-        const response = await fetch(
-            `${X_SYNDICATION_BASE_URL}${encodeURIComponent(normalizedHandle)}`,
-            {
-                headers: {
-                    Accept: 'text/html',
-                    'User-Agent': 'Mozilla/5.0 (compatible; InfinworkBot/1.0)',
-                },
-                cache: 'no-store',
-                signal: controller.signal,
-            }
-        );
-        if (!response.ok) {
-            throw new Error(`X syndication failed (${response.status})`);
-        }
-
-        const html = await response.text();
-        const nextData = html.match(
-            /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/
-        )?.[1];
-        if (!nextData) {
-            throw new Error('X syndication response missing timeline data');
-        }
-
-        const payload = JSON.parse(nextData);
-        const entries = payload?.props?.pageProps?.timeline?.entries;
-        if (!Array.isArray(entries)) {
-            throw new Error('X syndication timeline is empty');
-        }
-
-        const candidates: ScrapedPostCandidate[] = [];
-        const expectedHandle = normalizedHandle.toLowerCase();
-
-        for (const entry of entries) {
-            if (entry?.type !== 'tweet') continue;
-            const tweet = entry?.content?.tweet;
-            const statusId = String(tweet?.id_str || '');
-            if (!/^\d+$/.test(statusId)) continue;
-
-            const author = String(tweet?.user?.screen_name || '').toLowerCase();
-            if (author && author !== expectedHandle) continue;
-
-            const text = String(tweet?.full_text || tweet?.text || '').trim();
-            if (text.length < 16) continue;
-            // Retweets are not authored posts. Skip them just like the
-            // status-link parser does.
-            if (/^RT\s+@/i.test(text) || tweet?.retweeted_status) continue;
-
-            const postedAt = new Date(String(tweet?.created_at || ''));
-            candidates.push({
-                externalId: `x:${expectedHandle}:${statusId}`,
-                text: text.slice(0, 4000),
-                postUrl: `https://x.com/${expectedHandle}/status/${statusId}`,
-                postedAt: Number.isNaN(postedAt.getTime()) ? undefined : postedAt,
-                rawMarkdown: text,
-            });
-        }
-
-        return candidates.slice(0, 40);
-    } finally {
-        clearTimeout(timeout);
+    const nextData = html.match(
+        /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/
+    )?.[1];
+    if (!nextData) {
+        throw new Error('X syndication response missing timeline data');
     }
+
+    const payload = JSON.parse(nextData);
+    const entries = payload?.props?.pageProps?.timeline?.entries;
+    if (!Array.isArray(entries)) {
+        throw new Error('X syndication timeline is empty');
+    }
+
+    const candidates: ScrapedPostCandidate[] = [];
+    const expectedHandle = normalizedHandle.toLowerCase();
+
+    for (const entry of entries) {
+        if (entry?.type !== 'tweet') continue;
+        const tweet = entry?.content?.tweet;
+        const statusId = String(tweet?.id_str || '');
+        if (!/^\d+$/.test(statusId)) continue;
+
+        const author = String(tweet?.user?.screen_name || '').toLowerCase();
+        if (author && author !== expectedHandle) continue;
+
+        const text = String(tweet?.full_text || tweet?.text || '').trim();
+        if (text.length < 16) continue;
+        // Retweets are not authored posts. Skip them just like the
+        // status-link parser does.
+        if (/^RT\s+@/i.test(text) || tweet?.retweeted_status) continue;
+
+        const postedAt = new Date(String(tweet?.created_at || ''));
+        candidates.push({
+            externalId: `x:${expectedHandle}:${statusId}`,
+            text: text.slice(0, 4000),
+            postUrl: `https://x.com/${expectedHandle}/status/${statusId}`,
+            postedAt: Number.isNaN(postedAt.getTime()) ? undefined : postedAt,
+            rawMarkdown: text,
+        });
+    }
+
+    return candidates.slice(0, 40);
 }
 
 export async function scrapeXProfileWithFirecrawl(

@@ -83,7 +83,7 @@ Legacy hiring/candidate APIs still exist in code, but the current product focus 
   - Leaderboard default sort: **% on-portfolio**, then net score, then post count
   - Profiles with no scored posts rank below profiles with data in the window
 - Scrape pipeline: `frontend/src/lib/rank-politician/scrape.ts` + `pipeline.ts`
-  - Jina Reader primary (free; one retry on network/HTTP failure), X public syndication timeline fallback (free), Firecrawl fallback (paid, credit-guarded)
+  - X public syndication timeline primary (free; direct with Jina hop when rate-limited), Jina Reader fallback (free), Firecrawl fallback (paid, credit-guarded)
   - **Only** `x.com/{handle}/status/{id}` posts are accepted. Profile chrome and Google News headlines are never scored or displayed.
   - Classify + upsert posts, recompute politician `stats` from status posts inside the 90-day window
   - Posts older than **180 days** are pruned (`RANK_POLITICIAN_POST_RETENTION_DAYS`)

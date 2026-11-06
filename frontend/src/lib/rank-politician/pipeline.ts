@@ -269,8 +269,8 @@ async function upsertScoredPosts(
 
 /**
  * Multi-provider fetch chain:
- * 1. Jina Reader (`r.jina.ai/https://x.com/<handle>`) — free, no credits required.
- * 2. X public syndication timeline — free fallback for recent authored tweets.
+ * 1. X public syndication timeline — structured recent authored tweets, free.
+ * 2. Jina Reader profile page — free fallback if syndication is unavailable.
  * 3. Firecrawl — used only if the free providers returned 0 posts AND Firecrawl is configured with available credits.
  *
  * There is deliberately no news/RSS fallback: those headlines are not authored
@@ -286,9 +286,22 @@ async function fetchPoliticianCandidatesWithFallback(
     const profileUrl =
         politician.xProfileUrl || `https://x.com/${handle}`;
 
-    // Tier 1: Jina Reader (free, zero credits). Retry once on a
-    // network/HTTP failure; a valid response with 0 posts is not retried
-    // because the page itself did not contain status posts.
+    // Tier 1: X's public embedded-timeline endpoint. It returns authored
+    // tweets with status IDs and dates; the direct request falls back to a
+    // Jina hop when X rate-limits the serverless egress IP.
+    try {
+        const syndicationCandidates = await scrapeXProfileWithSyndication(handle);
+        if (syndicationCandidates.length > 0) {
+            return { candidates: syndicationCandidates, provider: 'x-syndication' };
+        }
+        errors.push('X syndication returned 0 posts');
+    } catch (err: any) {
+        errors.push(`X syndication: ${err?.message || 'failed'}`);
+    }
+
+    // Tier 2: Jina Reader profile page. Retry once on a network/HTTP failure;
+    // a valid response with 0 posts is not retried because the page itself
+    // did not contain status posts.
     for (let attempt = 1; attempt <= 2; attempt++) {
         try {
             const jinaScraped = await scrapeXProfileWithJina(profileUrl);
@@ -309,18 +322,6 @@ async function fetchPoliticianCandidatesWithFallback(
             }
             errors.push(`Jina: ${err?.message || 'failed'}`);
         }
-    }
-
-    // Tier 2: X's public embedded-timeline endpoint. No key, no credits, and
-    // it returns authored tweets rather than news headlines.
-    try {
-        const syndicationCandidates = await scrapeXProfileWithSyndication(handle);
-        if (syndicationCandidates.length > 0) {
-            return { candidates: syndicationCandidates, provider: 'x-syndication' };
-        }
-        errors.push('X syndication returned 0 posts');
-    } catch (err: any) {
-        errors.push(`X syndication: ${err?.message || 'failed'}`);
     }
 
     // Tier 3: Firecrawl (optional if configured and allowed)
