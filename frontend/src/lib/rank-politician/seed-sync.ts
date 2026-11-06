@@ -14,6 +14,7 @@ export interface PoliticianSeedSyncResult {
     inserted: number;
     updated: number;
     handleResets: number;
+    slugMigrations: number;
     deactivated: number;
     totalActive: number;
     totalInactive: number;
@@ -22,6 +23,13 @@ export interface PoliticianSeedSyncResult {
     withXHandle: number;
     withoutXHandle: number;
 }
+
+type ExistingPolitician = {
+    _id: unknown;
+    slug: string;
+    xHandle?: string;
+    stats?: { postCount?: number };
+};
 
 /**
  * Keep the DB in sync with the Union Cabinet + state council seed lists.
@@ -43,16 +51,17 @@ export async function syncPoliticianSeeds(
 
     const existing = (await Politician.find({})
         .select('slug xHandle stats.postCount')
-        .lean()) as Array<{
-        _id: unknown;
-        slug: string;
-        xHandle?: string;
-        stats?: { postCount?: number };
-    }>;
+        .lean()) as ExistingPolitician[];
     const existingBySlug = new Map(existing.map((politician) => [politician.slug, politician]));
+    const existingByHandle = new Map(
+        existing
+            .filter((politician) => Boolean(politician.xHandle))
+            .map((politician) => [String(politician.xHandle).toLowerCase(), politician])
+    );
 
     const activeSlugs = POLITICIAN_SEEDS.map((seed) => seed.slug);
     let handleResets = 0;
+    let slugMigrations = 0;
     let withXHandle = 0;
     let withoutXHandle = 0;
     const resetPoliticianIds: unknown[] = [];
@@ -60,7 +69,25 @@ export async function syncPoliticianSeeds(
 
     for (const seed of POLITICIAN_SEEDS) {
         const doc = toPoliticianDocument(seed);
-        const previous = existingBySlug.get(doc.slug);
+        let previous = existingBySlug.get(doc.slug);
+
+        // Older inactive profiles used shorter slugs (for example
+        // `devendra-fadnavis`). If the same verified handle is now a state
+        // seed, migrate that row to the state slug instead of colliding on the
+        // unique xHandle index and losing its scraped posts.
+        if (!previous && doc.xHandle) {
+            const legacy = existingByHandle.get(String(doc.xHandle).toLowerCase());
+            if (legacy && legacy.slug !== doc.slug) {
+                await Politician.updateOne(
+                    { _id: legacy._id },
+                    { $set: { slug: doc.slug } }
+                );
+                previous = { ...legacy, slug: doc.slug };
+                existingBySlug.set(doc.slug, previous);
+                slugMigrations++;
+            }
+        }
+
         const previousHandle = String(previous?.xHandle || '').toLowerCase();
         const nextHandle = String(doc.xHandle || '').toLowerCase();
         const handleChanged = Boolean(previous) && previousHandle !== nextHandle;
@@ -158,6 +185,7 @@ export async function syncPoliticianSeeds(
         inserted: bulkResult.upsertedCount,
         updated: bulkResult.modifiedCount,
         handleResets,
+        slugMigrations,
         deactivated: deactivateResult.modifiedCount,
         totalActive,
         totalInactive,

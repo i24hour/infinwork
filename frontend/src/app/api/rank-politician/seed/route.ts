@@ -24,6 +24,7 @@ export async function POST() {
             updated: result.updated,
             deactivated: result.deactivated,
             handleResets: result.handleResets,
+            slugMigrations: result.slugMigrations,
             cabinetTarget: UNION_CABINET_MINISTER_COUNT,
             stateTarget: STATE_MINISTER_COUNT,
             totalTarget: TOTAL_POLITICIAN_COUNT,
