@@ -352,7 +352,12 @@ function LiveWorkerList({
     const isLightTheme = useIsLightTheme();
 
     useEffect(() => {
-        const interval = setInterval(() => setCurrentTime(Date.now()), 1000);
+        // Scores move by about 0.01 every 10 seconds. A 1s tick resorted every
+        // card and made the leaderboard feel stuck.
+        const interval = setInterval(() => {
+            if (document.visibilityState === 'hidden') return;
+            setCurrentTime(Date.now());
+        }, 10000);
         return () => clearInterval(interval);
     }, []);
 
@@ -465,8 +470,9 @@ export default function WorkersPage() {
         fetchWorkers();
 
         const interval = setInterval(() => {
+            if (document.visibilityState === 'hidden') return;
             fetchWorkers();
-        }, 15000);
+        }, 60000);
 
         const handleVisibilityChange = () => {
             if (document.visibilityState === 'visible') {
@@ -514,7 +520,7 @@ export default function WorkersPage() {
                             { label: 'Workers', value: totalSignup, tone: 'default' },
                             { label: 'Running now', value: totalRunning, tone: 'green' },
                             { label: 'Tasks tracked', value: workers.reduce((sum, worker) => sum + worker.totalTasks, 0), tone: 'default' },
-                            { label: 'Refresh', value: '15s', tone: 'default' },
+                            { label: 'Refresh', value: '60s', tone: 'default' },
                         ].map((stat) => (
                             <div
                                 key={stat.label}

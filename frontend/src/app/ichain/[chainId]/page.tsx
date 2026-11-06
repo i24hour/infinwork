@@ -166,7 +166,10 @@ export default function ChainDetailPage({ params }: { params: Promise<{ chainId:
 
     useEffect(() => {
         fetchChain();
-        const interval = setInterval(fetchChain, 5000); // Poll server every 5s for sync
+        const interval = setInterval(() => {
+            if (document.visibilityState === 'hidden') return;
+            fetchChain();
+        }, 15000);
         
         // Client-side ticker for smooth real-time update
         const ticker = setInterval(() => {

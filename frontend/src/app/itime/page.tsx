@@ -8,7 +8,7 @@ import { useToast } from '@/components/ui/toast';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } from '@/lib/score';
 import { PerformanceChart } from '@/components/PerformanceChart';
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
 import { LiveTimer, LivePauseCountdown } from '@/components/LiveTimer';
 import {
     clearAllCache,
@@ -203,6 +203,166 @@ function getTaskIntervals(task: ITimeTask, now: number): Array<{ start: number; 
     return end > start ? [{ start, end }] : [];
 }
 
+const ITimeLiveStats = memo(function ITimeLiveStats({
+    tasks,
+    tasksReady,
+    scoreReady,
+    isLightTheme,
+    gamificationPoints,
+    gamificationPointsLastUpdatedAt,
+    githubPointsHistory,
+    chainPoints,
+    chainPointsHistory,
+    activeTasks,
+    completedCount,
+    totalCount,
+}: {
+    tasks: ITimeTask[];
+    tasksReady: boolean;
+    scoreReady: boolean;
+    isLightTheme: boolean;
+    gamificationPoints: number;
+    gamificationPointsLastUpdatedAt: string | number | null;
+    githubPointsHistory: GithubPointsSnapshot[] | null;
+    chainPoints: number;
+    chainPointsHistory: ChainPointsSnapshot[] | null;
+    activeTasks: number;
+    completedCount: number;
+    totalCount: number;
+}) {
+    const [scoreNow, setScoreNow] = useState(() => Date.now());
+
+    useEffect(() => {
+        const timer = setInterval(() => {
+            if (document.visibilityState === 'hidden') return;
+            setScoreNow(Date.now());
+        }, 1000);
+        return () => clearInterval(timer);
+    }, []);
+
+    const liveScore = useMemo<number | null>(
+        () => scoreReady
+            ? getScoreAtTime(tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory)
+            : null,
+        [scoreReady, tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory]
+    );
+    const liveScoreColorClass = liveScore !== null && liveScore < 0 ? 'text-red-500' : 'text-[#4CAF50]';
+
+    const todayStats = useMemo(() => {
+        const now = scoreNow;
+        const istOffset = 5.5 * 60 * 60 * 1000;
+        const istNow = new Date(now + istOffset);
+        const todayStart = Date.UTC(
+            istNow.getUTCFullYear(),
+            istNow.getUTCMonth(),
+            istNow.getUTCDate()
+        ) - istOffset;
+
+        const focusSeconds = tasks.reduce((sum, task) => {
+            const intervals = getTaskIntervals(task, now);
+            return sum + intervals.reduce((intervalSum, interval) => {
+                const start = Math.max(interval.start, todayStart);
+                const end = Math.min(interval.end, now);
+                return intervalSum + Math.max(0, end - start) / 1000;
+            }, 0);
+        }, 0);
+
+        const doneToday = tasks.filter(
+            (task) => typeof task.completedAt === 'number' && task.completedAt >= todayStart
+        ).length;
+
+        const scoreAtStart = getScoreAtTime(
+            tasks,
+            todayStart,
+            gamificationPoints,
+            gamificationPointsLastUpdatedAt,
+            githubPointsHistory,
+            chainPoints,
+            chainPointsHistory
+        );
+        const scoreDelta = liveScore !== null ? liveScore - scoreAtStart : null;
+
+        const dayKey = (timestamp: number) => {
+            const date = new Date(timestamp + istOffset);
+            return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+        };
+        const completedDays = new Set(
+            tasks
+                .filter((task) => typeof task.completedAt === 'number')
+                .map((task) => dayKey(task.completedAt as number))
+        );
+        let streak = 0;
+        let cursor = todayStart;
+        if (!completedDays.has(dayKey(todayStart))) {
+            cursor -= 24 * 60 * 60 * 1000;
+        }
+        while (completedDays.has(dayKey(cursor))) {
+            streak += 1;
+            cursor -= 24 * 60 * 60 * 1000;
+        }
+
+        return { focusSeconds, doneToday, scoreDelta, streak };
+    }, [
+        tasks,
+        scoreNow,
+        liveScore,
+        gamificationPoints,
+        gamificationPointsLastUpdatedAt,
+        githubPointsHistory,
+        chainPoints,
+        chainPointsHistory,
+    ]);
+
+    return (
+        <>
+            <div className="grid grid-cols-2 gap-4 mb-3 md:grid-cols-4 md:gap-6">
+                <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
+                    <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>Focus today</div>
+                    <div className={`text-2xl font-bold md:text-3xl ${isLightTheme ? 'text-zinc-900' : 'text-white'}`}>
+                        {tasksReady ? formatCompactDuration(todayStats.focusSeconds) : '—'}
+                    </div>
+                </div>
+
+                <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
+                    <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>Done today</div>
+                    <div className={`text-2xl font-bold md:text-3xl ${isLightTheme ? 'text-zinc-900' : 'text-white'}`}>
+                        {tasksReady ? todayStats.doneToday : '—'}
+                    </div>
+                </div>
+
+                <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
+                    <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>Live score</div>
+                    <div className={`font-mono text-2xl font-bold md:text-3xl ${liveScoreColorClass}`}>
+                        {scoreReady && liveScore !== null ? liveScore.toFixed(2) : '—'}
+                    </div>
+                    {scoreReady && todayStats.scoreDelta !== null && (
+                        <div className={`mt-1 text-xs font-semibold ${todayStats.scoreDelta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {todayStats.scoreDelta >= 0 ? '+' : ''}{todayStats.scoreDelta.toFixed(2)} today
+                        </div>
+                    )}
+                </div>
+
+                <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
+                    <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>Streak</div>
+                    <div className={`text-2xl font-bold md:text-3xl ${isLightTheme ? 'text-zinc-900' : 'text-white'}`}>
+                        {todayStats.streak} <span className="text-sm font-normal text-zinc-500">days</span>
+                    </div>
+                </div>
+            </div>
+
+            <div className={`mb-8 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>
+                <span>{totalCount} total tasks</span>
+                <span className="text-zinc-700">·</span>
+                <span>{activeTasks} running</span>
+                <span className="text-zinc-700">·</span>
+                <span>{completedCount} completed</span>
+                <span className="text-zinc-700">·</span>
+                <span>{todayStats.focusSeconds > 0 ? 'Timer running' : 'No focus logged yet'}</span>
+            </div>
+        </>
+    );
+});
+
 export default function ITimePage() {
     const { data: session, status } = useSession();
     const { toast } = useToast();
@@ -233,7 +393,6 @@ export default function ITimePage() {
     const [showSignInModal, setShowSignInModal] = useState(false);
     const [showPauseOptions, setShowPauseOptions] = useState<string | null>(null);
     const [completedTasksPage, setCompletedTasksPage] = useState(1);
-    const [scoreNow, setScoreNow] = useState<number>(() => Date.now());
     const [isLightTheme, setIsLightTheme] = useState<boolean>(() => getInitialIsLightTheme());
     const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -406,8 +565,9 @@ export default function ITimePage() {
         if (status !== 'authenticated' || !session?.user?.email) return;
 
         const interval = setInterval(() => {
+            if (document.visibilityState === 'hidden') return;
             fetchUserProfile();
-        }, 15000);
+        }, 60000);
 
         const handleVisibilityChange = () => {
             if (document.visibilityState === 'visible') {
@@ -428,8 +588,9 @@ export default function ITimePage() {
         if (status !== 'authenticated') return;
 
         const interval = setInterval(() => {
+            if (document.visibilityState === 'hidden') return;
             fetchTasks();
-        }, 30000);
+        }, 60000);
 
         const handleVisibilityChange = () => {
             if (document.visibilityState === 'visible') {
@@ -462,15 +623,9 @@ export default function ITimePage() {
         };
     }, [showPauseOptions]);
 
-    // Previous Timer Interval removed - now handled by LiveTimer components
-
-    useEffect(() => {
-        const scoreTimer = setInterval(() => {
-            setScoreNow(Date.now());
-        }, 1000);
-
-        return () => clearInterval(scoreTimer);
-    }, []);
+    // Previous Timer Interval removed - now handled by LiveTimer components.
+    // The live score clock lives in ITimeLiveStats so this page does not
+    // re-render the task list and year chart every second.
 
     // Save tasks - client cache for authenticated, localStorage for guest
     useEffect(() => {
@@ -872,13 +1027,6 @@ export default function ITimePage() {
 
     const tasksReady = hasLoadedTasksOnce;
     const scoreReady = tasksReady && (status === 'unauthenticated' || hasLoadedProfileOnce);
-    const liveScore = useMemo<number | null>(
-        () => scoreReady
-            ? getScoreAtTime(tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory)
-            : null,
-        [scoreReady, tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory]
-    );
-    const liveScoreColorClass = liveScore !== null && liveScore < 0 ? 'text-red-500' : 'text-[#4CAF50]';
     const activeTasks = useMemo(() => tasks.filter((task) => task.enabled && !task.completed && !task.cancelledAt).length, [tasks]);
     const pendingTasks = useMemo(
         () => tasks
@@ -942,71 +1090,6 @@ export default function ITimePage() {
         setCompletedTasksPage((prev) => Math.min(prev, completedTasksTotalPages));
     }, [completedTasksTotalPages]);
 
-    const todayStats = useMemo(() => {
-        const now = scoreNow;
-        const istOffset = 5.5 * 60 * 60 * 1000;
-        const istNow = new Date(now + istOffset);
-        const todayStart = Date.UTC(
-            istNow.getUTCFullYear(),
-            istNow.getUTCMonth(),
-            istNow.getUTCDate()
-        ) - istOffset;
-
-        const focusSeconds = tasks.reduce((sum, task) => {
-            const intervals = getTaskIntervals(task, now);
-            return sum + intervals.reduce((intervalSum, interval) => {
-                const start = Math.max(interval.start, todayStart);
-                const end = Math.min(interval.end, now);
-                return intervalSum + Math.max(0, end - start) / 1000;
-            }, 0);
-        }, 0);
-
-        const doneToday = tasks.filter(
-            (task) => typeof task.completedAt === 'number' && task.completedAt >= todayStart
-        ).length;
-
-        const scoreAtStart = getScoreAtTime(
-            tasks,
-            todayStart,
-            gamificationPoints,
-            gamificationPointsLastUpdatedAt,
-            githubPointsHistory,
-            chainPoints,
-            chainPointsHistory
-        );
-        const scoreDelta = liveScore !== null ? liveScore - scoreAtStart : null;
-
-        const dayKey = (timestamp: number) => {
-            const date = new Date(timestamp + istOffset);
-            return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
-        };
-        const completedDays = new Set(
-            tasks
-                .filter((task) => typeof task.completedAt === 'number')
-                .map((task) => dayKey(task.completedAt as number))
-        );
-        let streak = 0;
-        let cursor = todayStart;
-        if (!completedDays.has(dayKey(todayStart))) {
-            cursor -= 24 * 60 * 60 * 1000;
-        }
-        while (completedDays.has(dayKey(cursor))) {
-            streak += 1;
-            cursor -= 24 * 60 * 60 * 1000;
-        }
-
-        return { focusSeconds, doneToday, scoreDelta, streak };
-    }, [
-        tasks,
-        scoreNow,
-        liveScore,
-        gamificationPoints,
-        gamificationPointsLastUpdatedAt,
-        githubPointsHistory,
-        chainPoints,
-        chainPointsHistory,
-    ]);
-
     return (
         <div className="flex flex-col md:flex-row min-h-screen bg-black">
             <Sidebar />
@@ -1060,51 +1143,20 @@ export default function ITimePage() {
                     </div>
                 </div>
 
-                {/* Today */}
-                <div className="grid grid-cols-2 gap-4 mb-3 md:grid-cols-4 md:gap-6">
-                    <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
-                        <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>Focus today</div>
-                        <div className={`text-2xl font-bold md:text-3xl ${isLightTheme ? 'text-zinc-900' : 'text-white'}`}>
-                            {tasksReady ? formatCompactDuration(todayStats.focusSeconds) : '—'}
-                        </div>
-                    </div>
-
-                    <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
-                        <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>Done today</div>
-                        <div className={`text-2xl font-bold md:text-3xl ${isLightTheme ? 'text-zinc-900' : 'text-white'}`}>
-                            {tasksReady ? todayStats.doneToday : '—'}
-                        </div>
-                    </div>
-
-                    <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
-                        <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>Live score</div>
-                        <div className={`font-mono text-2xl font-bold md:text-3xl ${liveScoreColorClass}`}>
-                            {scoreReady && liveScore !== null ? liveScore.toFixed(2) : '—'}
-                        </div>
-                        {scoreReady && todayStats.scoreDelta !== null && (
-                            <div className={`mt-1 text-xs font-semibold ${todayStats.scoreDelta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                                {todayStats.scoreDelta >= 0 ? '+' : ''}{todayStats.scoreDelta.toFixed(2)} today
-                            </div>
-                        )}
-                    </div>
-
-                    <div className={`rounded-2xl border p-4 md:p-6 ${isLightTheme ? 'bg-black/5 border-black/10' : 'bg-black border-white/10'}`}>
-                        <div className={`mb-2 text-[10px] font-bold uppercase tracking-widest ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>Streak</div>
-                        <div className={`text-2xl font-bold md:text-3xl ${isLightTheme ? 'text-zinc-900' : 'text-white'}`}>
-                            {todayStats.streak} <span className="text-sm font-normal text-zinc-500">days</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div className={`mb-8 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs ${isLightTheme ? 'text-zinc-600' : 'text-zinc-500'}`}>
-                    <span>{tasks.filter((task) => !task.cancelledAt).length} total tasks</span>
-                    <span className="text-zinc-700">·</span>
-                    <span>{activeTasks} running</span>
-                    <span className="text-zinc-700">·</span>
-                    <span>{completedTasks.length} completed</span>
-                    <span className="text-zinc-700">·</span>
-                    <span>{todayStats.focusSeconds > 0 ? 'Timer running' : 'No focus logged yet'}</span>
-                </div>
+                <ITimeLiveStats
+                    tasks={tasks}
+                    tasksReady={tasksReady}
+                    scoreReady={scoreReady}
+                    isLightTheme={isLightTheme}
+                    gamificationPoints={gamificationPoints}
+                    gamificationPointsLastUpdatedAt={gamificationPointsLastUpdatedAt}
+                    githubPointsHistory={githubPointsHistory}
+                    chainPoints={chainPoints}
+                    chainPointsHistory={chainPointsHistory}
+                    activeTasks={activeTasks}
+                    completedCount={completedTasks.length}
+                    totalCount={tasks.filter((task) => !task.cancelledAt).length}
+                />
 
                 {/* Performance Chart */}
                 <div className="mb-8 w-full max-w-none">

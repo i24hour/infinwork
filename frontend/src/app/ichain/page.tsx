@@ -60,8 +60,10 @@ export default function IChainPage() {
 
     useEffect(() => {
         fetchChains();
-        // Poll every 5 seconds for list view
-        const interval = setInterval(fetchChains, 5000);
+        const interval = setInterval(() => {
+            if (document.visibilityState === 'hidden') return;
+            fetchChains();
+        }, 20000);
         return () => clearInterval(interval);
     }, []);
 

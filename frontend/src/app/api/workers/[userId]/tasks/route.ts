@@ -49,7 +49,7 @@ export async function GET(
         autoCancelExpiredActiveTasks({ userId: targetEmail }).catch((err) =>
             console.error('autoCancelExpiredActiveTasks failed in worker tasks route:', err)
         );
-        recomputeChainPointsForUsers([targetEmail]).catch((err) =>
+        recomputeChainPointsForUsers([targetEmail], { minIntervalMs: 2 * 60 * 1000 }).catch((err) =>
             console.error('recomputeChainPointsForUsers failed in worker tasks route:', err)
         );
 

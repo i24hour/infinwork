@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, use, useMemo } from 'react';
+import { useState, useEffect, useCallback, use, useMemo, memo } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import { LiveTimer } from '@/components/LiveTimer';
@@ -8,6 +8,43 @@ import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } f
 import { PerformanceChart } from '@/components/PerformanceChart';
 import { useRouter } from 'next/navigation';
 import { fetchWithCache, getCachedData } from '@/lib/client-cache';
+
+const WorkerLiveScore = memo(function WorkerLiveScore({
+    tasks,
+    gamificationPoints,
+    gamificationPointsLastUpdatedAt,
+    githubPointsHistory,
+    chainPoints,
+    chainPointsHistory,
+}: {
+    tasks: ITimeTask[];
+    gamificationPoints: number;
+    gamificationPointsLastUpdatedAt: string | number | null;
+    githubPointsHistory: GithubPointsSnapshot[] | null;
+    chainPoints: number;
+    chainPointsHistory: ChainPointsSnapshot[] | null;
+}) {
+    const [scoreNow, setScoreNow] = useState(() => Date.now());
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (document.visibilityState === 'hidden') return;
+            setScoreNow(Date.now());
+        }, 1000);
+        return () => clearInterval(interval);
+    }, []);
+
+    const liveScore = useMemo(
+        () => getScoreAtTime(tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory),
+        [tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory]
+    );
+
+    return (
+        <div className={`text-2xl sm:text-3xl lg:text-4xl font-bold truncate tracking-tight ${liveScore < 0 ? 'text-red-500' : 'text-[#4CAF50]'}`}>
+            {liveScore.toFixed(2)}
+        </div>
+    );
+});
 
 // Use same types as ITimeTracker
 interface ITimeTask {
@@ -104,7 +141,6 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
     const [isLoading, setIsLoading] = useState<boolean>(() => !initialCached);
     const [error, setError] = useState<string | null>(null);
     const [selectedTask, setSelectedTask] = useState<ITimeTask | null>(null);
-    const [scoreNow, setScoreNow] = useState(() => Date.now());
     const [gamificationPoints, setGamificationPoints] = useState<number>(() => initialCached?.user?.points || 0);
     const [gamificationPointsLastUpdatedAt, setGamificationPointsLastUpdatedAt] = useState<string | null>(() =>
         initialCached?.user?.githubPointsLastUpdatedAt || null
@@ -155,20 +191,13 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
     useEffect(() => {
         fetchTasks();
         
-        // Poll every 10 seconds to keep data fresh for viewers
         const pollInterval = setInterval(() => {
+            if (document.visibilityState === 'hidden') return;
             fetchTasks();
-        }, 10000);
-        
+        }, 30000);
+
         return () => clearInterval(pollInterval);
     }, [fetchTasks]);
-
-    useEffect(() => {
-        const interval = setInterval(() => {
-            setScoreNow(Date.now());
-        }, 1000);
-        return () => clearInterval(interval);
-    }, []);
 
     useEffect(() => {
         setSelectedTask((current) => {
@@ -254,11 +283,6 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
         [tasks]
     );
     const completedTasks = useMemo(() => tasks.filter((task) => task.completed), [tasks]);
-    const liveScore = useMemo(
-        () => getScoreAtTime(tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory),
-        [tasks, scoreNow, gamificationPoints, gamificationPointsLastUpdatedAt, githubPointsHistory, chainPoints, chainPointsHistory]
-    );
-    const liveScoreColorClass = liveScore < 0 ? 'text-red-500' : 'text-[#4CAF50]';
 
     if (isLoading) {
         return (
@@ -343,9 +367,14 @@ export default function WorkerTasksPage({ params }: { params: Promise<{ userId: 
 
                     <div className="bg-black  rounded-2xl border border-white/10 p-6 flex flex-col justify-center">
                         <div className="text-xs uppercase tracking-wider font-semibold text-zinc-400 mb-1">Score</div>
-                        <div className={`text-2xl sm:text-3xl lg:text-4xl font-bold truncate tracking-tight ${liveScoreColorClass}`}>
-                            {liveScore.toFixed(2)}
-                        </div>
+                        <WorkerLiveScore
+                            tasks={tasks}
+                            gamificationPoints={gamificationPoints}
+                            gamificationPointsLastUpdatedAt={gamificationPointsLastUpdatedAt}
+                            githubPointsHistory={githubPointsHistory}
+                            chainPoints={chainPoints}
+                            chainPointsHistory={chainPointsHistory}
+                        />
                     </div>
                 </div>
 

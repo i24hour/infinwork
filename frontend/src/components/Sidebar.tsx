@@ -84,8 +84,9 @@ export function Sidebar() {
         fetchUserProfile();
 
         const interval = setInterval(() => {
+            if (document.visibilityState === 'hidden') return;
             fetchUserProfile();
-        }, 15000);
+        }, 60000);
 
         const handleVisibilityChange = () => {
             if (document.visibilityState === 'visible') {

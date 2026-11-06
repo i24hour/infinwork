@@ -126,8 +126,9 @@ export default function SettingsPage() {
         if (!session) return;
 
         const interval = setInterval(() => {
+            if (document.visibilityState === 'hidden') return;
             fetchSettings();
-        }, 15000);
+        }, 60000);
 
         const handleVisibilityChange = () => {
             if (document.visibilityState === 'visible') {

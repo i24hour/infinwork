@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
         syncGithubForUserByEmail(email).catch((syncError) => {
             console.error('GitHub auto-sync failed in settings route:', syncError);
         });
-        recomputeChainPointsForUsers([email]).catch((chainError) => {
+        recomputeChainPointsForUsers([email], { minIntervalMs: 2 * 60 * 1000 }).catch((chainError) => {
             console.error('Chain points recompute failed in settings route:', chainError);
         });
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { memo, useMemo, useState, useEffect, useRef } from 'react';
 import { createChart, ColorType, CandlestickSeries, BaselineSeries, type IChartApi, type ISeriesApi, type CandlestickData, type LineData, type BaselineData, type Time, LineStyle } from 'lightweight-charts';
 import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } from '@/lib/score';
 import { getInitialIsLightTheme } from '@/lib/client-cache';
@@ -102,20 +102,24 @@ function getIstDayStart(timestamp: number): number {
     ) - IST_OFFSET_MS;
 }
 
+const istDateFormatter = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+});
+
+const istMonthFormatter = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    month: 'short',
+});
+
 function formatIstDate(timestamp: number): string {
-    return new Intl.DateTimeFormat('en-IN', {
-        timeZone: 'Asia/Kolkata',
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
-    }).format(new Date(timestamp));
+    return istDateFormatter.format(new Date(timestamp));
 }
 
 function formatIstMonth(timestamp: number): string {
-    return new Intl.DateTimeFormat('en-IN', {
-        timeZone: 'Asia/Kolkata',
-        month: 'short',
-    }).format(new Date(timestamp));
+    return istMonthFormatter.format(new Date(timestamp));
 }
 
 function getDailyScoreClass(value: number, level: number, isLightTheme: boolean): string {
@@ -233,7 +237,7 @@ function snapToInterval(timestamp: number, interval: CandleInterval): number {
     return d.getTime();
 }
 
-export function PerformanceChart({
+export const PerformanceChart = memo(function PerformanceChart({
     tasks,
     gamificationPoints = 0,
     gamificationPointsLastUpdatedAt = null,
@@ -1001,4 +1005,4 @@ export function PerformanceChart({
             )}
         </div >
     );
-}
+});

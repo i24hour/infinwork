@@ -87,7 +87,17 @@ function areHistoriesEqual(a: PointsHistoryEntry[], b: PointsHistoryEntry[]): bo
     return true;
 }
 
-export async function recomputeChainPointsForUsers(userIds: string[]): Promise<void> {
+const lastChainRecomputeAt = new Map<string, number>();
+
+/**
+ * Read paths (settings, worker profiles) call this on a timer. Chain points
+ * only move when a chain is visited, so skip the aggregation if this process
+ * already recomputed the same user recently. Writes should pass `force`.
+ */
+export async function recomputeChainPointsForUsers(
+    userIds: string[],
+    options: { minIntervalMs?: number; force?: boolean } = {}
+): Promise<void> {
     const normalizedUserIds = [...new Set(
         (userIds || [])
             .map((id) => String(id || '').trim().toLowerCase())
@@ -96,10 +106,21 @@ export async function recomputeChainPointsForUsers(userIds: string[]): Promise<v
 
     if (normalizedUserIds.length === 0) return;
 
+    const minIntervalMs = options.force ? 0 : Math.max(0, options.minIntervalMs || 0);
+    const nowMs = Date.now();
+    const dueUserIds = minIntervalMs > 0
+        ? normalizedUserIds.filter((userId) => nowMs - (lastChainRecomputeAt.get(userId) || 0) >= minIntervalMs)
+        : normalizedUserIds;
+
+    if (dueUserIds.length === 0) return;
+    for (const userId of dueUserIds) {
+        lastChainRecomputeAt.set(userId, nowMs);
+    }
+
     const aggregateRows = await Chain.aggregate([
-        { $match: { 'members.userId': { $in: normalizedUserIds } } },
+        { $match: { 'members.userId': { $in: dueUserIds } } },
         { $unwind: '$members' },
-        { $match: { 'members.userId': { $in: normalizedUserIds } } },
+        { $match: { 'members.userId': { $in: dueUserIds } } },
         {
             $project: {
                 userId: '$members.userId',
@@ -142,7 +163,7 @@ export async function recomputeChainPointsForUsers(userIds: string[]): Promise<v
         totalsByUser.set(userId, rewardPointsFromContributionSeconds(totalContributionSeconds));
     }
 
-    const users = await User.find({ email: { $in: normalizedUserIds } });
+    const users = await User.find({ email: { $in: dueUserIds } });
     const now = new Date();
 
     for (const user of users) {
