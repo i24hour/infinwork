@@ -15,7 +15,7 @@ import {
     isFirecrawlCreditError,
     parsePostsFromFirecrawl,
     scrapeXProfileWithFirecrawl,
-    scrapeXProfileWithJina,
+    scrapeXProfileWithJinaHtml,
     scrapeXProfileWithSyndication,
     type ScrapedPostCandidate,
     type ScrapeProviderName,
@@ -299,29 +299,16 @@ async function fetchPoliticianCandidatesWithFallback(
         errors.push(`X syndication: ${err?.message || 'failed'}`);
     }
 
-    // Tier 2: Jina Reader profile page. Retry once on a network/HTTP failure;
-    // a valid response with 0 posts is not retried because the page itself
-    // did not contain status posts.
-    for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-            const jinaScraped = await scrapeXProfileWithJina(profileUrl);
-            const jinaCandidates = parsePostsFromFirecrawl(
-                handle,
-                jinaScraped.markdown,
-                jinaScraped.links
-            );
-            if (jinaCandidates.length > 0) {
-                return { candidates: jinaCandidates, provider: 'jina' };
-            }
-            errors.push('Jina returned 0 posts');
-            break;
-        } catch (err: any) {
-            if (attempt === 1) {
-                await new Promise((resolve) => setTimeout(resolve, 1500));
-                continue;
-            }
-            errors.push(`Jina: ${err?.message || 'failed'}`);
+    // Tier 2: Jina Reader's HTML mode. It keeps the per-post status links
+    // that the markdown mode strips, so no extra provider round-trip is needed.
+    try {
+        const jinaCandidates = await scrapeXProfileWithJinaHtml(handle, profileUrl);
+        if (jinaCandidates.length > 0) {
+            return { candidates: jinaCandidates, provider: 'jina-html' };
         }
+        errors.push('Jina HTML returned 0 posts');
+    } catch (err: any) {
+        errors.push(`Jina HTML: ${err?.message || 'failed'}`);
     }
 
     // Tier 3: Firecrawl (optional if configured and allowed)
@@ -449,7 +436,7 @@ export async function runRankPoliticianScrapeBatch(
 
     const firecrawlConfigured = Boolean(process.env.FIRECRAWL_API_KEY);
     const llmConfigured = isLlmConfigured();
-    const limit = Math.max(1, Math.min(options.limit || RANK_POLITICIAN_BATCH_SIZE, 15));
+    const limit = Math.max(1, Math.min(options.limit || RANK_POLITICIAN_BATCH_SIZE, 8));
     const force = Boolean(options.force);
 
     // Check optional Firecrawl credits only to decide if Tier-2 Firecrawl fallback can be used.

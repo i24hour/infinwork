@@ -6,7 +6,7 @@ export interface ScrapedPostCandidate {
     rawMarkdown?: string;
 }
 
-export type ScrapeProviderName = 'jina' | 'firecrawl' | 'x-syndication';
+export type ScrapeProviderName = 'jina' | 'jina-html' | 'firecrawl' | 'x-syndication';
 
 export interface FirecrawlScrapeResult {
     markdown: string;
@@ -386,6 +386,120 @@ export async function scrapeXProfileWithJina(
             links,
             provider: 'jina',
         };
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function decodeHtmlEntities(input: string): string {
+    return input
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;|&apos;/g, "'")
+        .replace(/&#x([0-9a-f]+);/gi, (_, hex) =>
+            String.fromCodePoint(parseInt(hex, 16))
+        )
+        .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)));
+}
+
+function htmlToPostText(block: string): string {
+    return decodeHtmlEntities(
+        block
+            .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<\/p>/gi, '\n')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/[ \t]+/g, ' ')
+            .replace(/\n\s+/g, '\n')
+            .trim()
+    );
+}
+
+/**
+ * Parse the HTML variant of a Jina-rendered X profile. Unlike the markdown
+ * variant, the HTML keeps the per-post status links, so we can recover the
+ * status ID even when X does not render a visible timestamp link.
+ */
+export function parseJinaHtmlPosts(
+    handle: string,
+    html: string
+): ScrapedPostCandidate[] {
+    const normalizedHandle = handle.replace(/^@/, '').toLowerCase();
+    const statusRegex = new RegExp(
+        `data-href="\\/${normalizedHandle}\\/status\\/(\\d+)"`,
+        'gi'
+    );
+    const seen = new Set<string>();
+    const candidates: ScrapedPostCandidate[] = [];
+    let match: RegExpExecArray | null = null;
+
+    while ((match = statusRegex.exec(html)) !== null) {
+        const statusId = match[1];
+        if (seen.has(statusId)) continue;
+
+        const position = match.index;
+        const listStart = html.lastIndexOf('<li>', position);
+        const listEnd = html.indexOf('</li>', position);
+        if (listStart < 0 || listEnd < 0) continue;
+
+        let text = htmlToPostText(html.slice(listStart, listEnd + 5));
+        // Strip the author/time header X renders before the post body.
+        text = text.replace(
+            /^.*?@[A-Za-z0-9_]+\s+(?:(?:\d+[smhd])|(?:[A-Z][a-z]{2} \d{1,2}, \d{4}))\s+/i,
+            ''
+        );
+        text = cleanPostText(text);
+        if (!text || text.length < 16 || isNoiseLine(text)) continue;
+
+        seen.add(statusId);
+        candidates.push({
+            externalId: `x:${normalizedHandle}:${statusId}`,
+            text: text.slice(0, 4000),
+            postUrl: `https://x.com/${normalizedHandle}/status/${statusId}`,
+            postedAt: decodeSnowflakeTimestamp(statusId),
+            rawMarkdown: text,
+        });
+    }
+
+    return candidates.slice(0, 40);
+}
+
+/**
+ * Jina Reader's HTML mode is the most reliable free X profile source: it
+ * preserves the status permalinks that the markdown mode strips.
+ */
+export async function scrapeXProfileWithJinaHtml(
+    handle: string,
+    profileUrl: string,
+    jinaApiKey: string = process.env.JINA_API_KEY || ''
+): Promise<ScrapedPostCandidate[]> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+
+    try {
+        const headers: Record<string, string> = {
+            Accept: 'text/html',
+            'X-Return-Format': 'html',
+            'X-Wait-For-Selector': 'article',
+        };
+        if (jinaApiKey) {
+            headers.Authorization = `Bearer ${jinaApiKey}`;
+        }
+
+        const response = await fetch(`${JINA_READER_BASE_URL}${profileUrl}`, {
+            method: 'GET',
+            headers,
+            cache: 'no-store',
+            signal: controller.signal,
+        });
+        if (!response.ok) {
+            throw new Error(`Jina HTML failed (${response.status})`);
+        }
+
+        return parseJinaHtmlPosts(handle, await response.text());
     } finally {
         clearTimeout(timeout);
     }

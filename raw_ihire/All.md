@@ -11,7 +11,7 @@ Active workspace modules in this repo:
 
 1. **iTime** (`/itime`) - task timer + performance score engine
 2. **Workers** (`/workers`) - user leaderboard and per-user task analytics
-3. **Rank Politician** (`/rank-politician`) - Union Cabinet X communication focus rankings (seed + Jina/Firecrawl scrape/score pipeline + leaderboard)
+3. **Rank Politician** (`/rank-politician`) - Union Cabinet + state/UT council X communication focus rankings (seed + Jina/Firecrawl scrape/score pipeline + leaderboard)
 4. **iChain** (`/ichain`) - collaborative chain timer with burst mechanics
 5. **Ideas** (`/ideas`) - public/private idea board + replies
 6. **SF Tracker** (`/sf-tracker`) - success/failure target tracking
@@ -83,7 +83,7 @@ Legacy hiring/candidate APIs still exist in code, but the current product focus 
   - Leaderboard default sort: **% on-portfolio**, then net score, then post count
   - Profiles with no scored posts rank below profiles with data in the window
 - Scrape pipeline: `frontend/src/lib/rank-politician/scrape.ts` + `pipeline.ts`
-  - X public syndication timeline primary (free; direct with Jina hop when rate-limited), Jina Reader fallback (free), Firecrawl fallback (paid, credit-guarded)
+  - X public syndication timeline primary (free; direct with Jina hop when rate-limited), Jina Reader **HTML** fallback (free; preserves status links), Firecrawl fallback (paid, credit-guarded)
   - **Only** `x.com/{handle}/status/{id}` posts are accepted. Profile chrome and Google News headlines are never scored or displayed.
   - Classify + upsert posts, recompute politician `stats` from status posts inside the 90-day window
   - Posts older than **180 days** are pruned (`RANK_POLITICIAN_POST_RETENTION_DAYS`)
@@ -319,7 +319,7 @@ Modes:
 - External cron (preferred frequency): GitHub Actions `.github/workflows/rank-politician-cron.yml` every 4 hours
   - Secrets: `CRON_SECRET`, optional `RANK_POLITICIAN_CRON_URL`
   - Setup notes: `.github/RANK_POLITICIAN_CRON.md`
-- Batch: 8 handled politicians/run, prioritized `never` → `partial` → `error` → `success`, then oldest `lastScrapedAt`; no-X profiles excluded; old posts pruned after each batch
+- Batch: 8 handled politicians/run (hard max 8 to stay inside free-provider rate limits), prioritized `never` → `partial` → `error` → `success`, then oldest `lastScrapedAt`; no-X profiles excluded; old posts pruned after each batch
 - Note: hitting the cron URL in a browser returns 401 unless `Authorization: Bearer $CRON_SECRET` is sent (Vercel/GitHub Actions add this automatically)
 
 ### Maintenance
