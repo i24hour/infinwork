@@ -14,6 +14,7 @@ interface PaletteItem {
 }
 
 const PAGE_ITEMS: PaletteItem[] = [
+    { id: 'page-workbench', label: 'Workbench', hint: 'Compile work into impact', group: 'Pages', href: '/workbench' },
     { id: 'page-workers', label: 'Workers', hint: 'Live leaderboard', group: 'Pages', href: '/workers' },
     { id: 'page-itime', label: 'iTime', hint: 'Track a task', group: 'Pages', href: '/itime' },
     { id: 'page-chain', label: 'Chain', hint: 'Collaborative chains', group: 'Pages', href: '/ichain' },
