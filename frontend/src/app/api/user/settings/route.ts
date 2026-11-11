@@ -64,7 +64,9 @@ export async function GET(request: NextRequest) {
             lastGithubSyncAt: user?.lastGithubSyncAt || null,
             githubPointsLastUpdatedAt: user?.githubPointsLastUpdatedAt || user?.githubConnectedAt || null,
             githubPointsHistory: user?.githubPointsHistory || [],
-            chainPointsHistory: user?.chainPointsHistory || []
+            chainPointsHistory: user?.chainPointsHistory || [],
+            widgetConnected: Boolean(user?.widgetTokenHash),
+            widgetTokenPrefix: user?.widgetTokenPrefix || null,
         });
     } catch (error) {
         console.error('Error fetching settings:', error);

@@ -4,4 +4,6 @@
     <string name="title_activity_main">infinWORK</string>
     <string name="package_name">app.infinwork.mobile</string>
     <string name="custom_url_scheme">app.infinwork.mobile</string>
+    <string name="widget_name">infinWORK</string>
+    <string name="widget_description">Live score and the task that is running</string>
 </resources>

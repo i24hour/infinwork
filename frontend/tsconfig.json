@@ -33,6 +33,7 @@
   "exclude": [
     "node_modules",
     "src/lib/rank-politician/score.keyword.test.ts",
-    "src/lib/itime.test.ts"
+    "src/lib/itime.test.ts",
+    "src/lib/widget-snapshot.test.ts"
   ]
 }

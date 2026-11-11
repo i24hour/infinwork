@@ -45,6 +45,11 @@ export interface IUser {
     githubSyncRetryAt?: Date | null;
     showGithubContributions?: boolean;
     isAdmin?: boolean;
+    /** sha256 of the key pasted into the Android and Mac widgets. */
+    widgetTokenHash?: string;
+    /** First characters of the key, safe to show in Settings. */
+    widgetTokenPrefix?: string;
+    widgetTokenCreatedAt?: Date;
     createdAt?: Date;
     updatedAt?: Date;
 }
@@ -164,6 +169,18 @@ const UserSchema = new mongoose.Schema<IUser>({
         type: Boolean,
         default: false,
         index: true,
+    },
+    widgetTokenHash: {
+        type: String,
+        unique: true,
+        sparse: true,
+        index: true,
+    },
+    widgetTokenPrefix: {
+        type: String,
+    },
+    widgetTokenCreatedAt: {
+        type: Date,
     },
 }, {
     timestamps: true,

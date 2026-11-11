@@ -13,6 +13,7 @@
     "lint": "eslint",
     "test:rank-keywords": "node --experimental-strip-types src/lib/rank-politician/score.keyword.test.ts",
     "test:itime": "node --experimental-strip-types src/lib/itime.test.ts",
+    "test:widget": "node --experimental-strip-types --import ./scripts/widget-test-loader.mjs src/lib/widget-snapshot.test.ts",
     "cap:sync": "npx cap sync android",
     "cap:open:android": "npx cap open android",
     "cap:copy": "npx cap copy android",

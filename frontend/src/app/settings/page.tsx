@@ -21,6 +21,8 @@ interface SettingsResponse {
     githubSyncRetryAt?: string | null;
     githubOAuthConfigured?: boolean;
     lastGithubSyncAt?: string | null;
+    widgetConnected?: boolean;
+    widgetTokenPrefix?: string | null;
 }
 
 export default function SettingsPage() {
@@ -43,6 +45,11 @@ export default function SettingsPage() {
     const [githubSyncError, setGithubSyncError] = useState<string | null>(() => initialCached?.githubSyncError || null);
     const [githubSyncRetryAt, setGithubSyncRetryAt] = useState<string | null>(() => initialCached?.githubSyncRetryAt || null);
     const [githubOAuthConfigured, setGithubOAuthConfigured] = useState<boolean>(() => initialCached?.githubOAuthConfigured !== false);
+    const [widgetConnected, setWidgetConnected] = useState<boolean>(() => Boolean(initialCached?.widgetConnected));
+    const [widgetTokenPrefix, setWidgetTokenPrefix] = useState<string | null>(() => initialCached?.widgetTokenPrefix || null);
+    const [widgetToken, setWidgetToken] = useState<string | null>(null);
+    const [widgetBusy, setWidgetBusy] = useState(false);
+    const [widgetCopied, setWidgetCopied] = useState(false);
     const [isRulesOpen, setIsRulesOpen] = useState(false);
 
     useEffect(() => {
@@ -97,6 +104,8 @@ export default function SettingsPage() {
             setGithubSyncError(data.githubSyncError || null);
             setGithubSyncRetryAt(data.githubSyncRetryAt || null);
             setGithubOAuthConfigured(data.githubOAuthConfigured !== false);
+            setWidgetConnected(Boolean(data.widgetConnected));
+            setWidgetTokenPrefix(data.widgetTokenPrefix || null);
         } catch (err) {
             console.error('Error fetching settings:', err);
         } finally {
@@ -116,6 +125,9 @@ export default function SettingsPage() {
             setLastGithubSyncAt(null);
             setGithubSyncError(null);
             setGithubSyncRetryAt(null);
+            setWidgetConnected(false);
+            setWidgetTokenPrefix(null);
+            setWidgetToken(null);
             setLoading(false);
             return;
         }
@@ -243,6 +255,69 @@ export default function SettingsPage() {
             await signIn('github');
         } catch {
             setMessage({ type: 'error', text: 'Could not start GitHub connection. Please try again.' });
+        }
+    };
+
+    const rememberWidget = (connected: boolean, prefix: string | null) => {
+        setWidgetConnected(connected);
+        setWidgetTokenPrefix(prefix);
+        const cached = getCachedData<SettingsResponse>('/api/user/settings');
+        if (cached) {
+            setCachedData('/api/user/settings', {
+                ...cached,
+                widgetConnected: connected,
+                widgetTokenPrefix: prefix,
+            });
+        }
+    };
+
+    const handleCreateWidgetKey = async () => {
+        setWidgetBusy(true);
+        setWidgetCopied(false);
+        setMessage({ type: '', text: '' });
+        try {
+            const res = await fetch('/api/widget/token', { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.token) {
+                setMessage({ type: 'error', text: data.error || 'Could not create a widget key.' });
+                return;
+            }
+            setWidgetToken(data.token);
+            rememberWidget(true, data.prefix || null);
+        } catch {
+            setMessage({ type: 'error', text: 'Could not create a widget key.' });
+        } finally {
+            setWidgetBusy(false);
+        }
+    };
+
+    const handleCopyWidgetKey = async () => {
+        if (!widgetToken) return;
+        try {
+            await navigator.clipboard.writeText(widgetToken);
+            setWidgetCopied(true);
+        } catch {
+            setMessage({ type: 'error', text: 'Copy the key manually. Clipboard access was blocked.' });
+        }
+    };
+
+    const handleDisconnectWidget = async () => {
+        setWidgetBusy(true);
+        setMessage({ type: '', text: '' });
+        try {
+            const res = await fetch('/api/widget/token', { method: 'DELETE' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                setMessage({ type: 'error', text: data.error || 'Could not disconnect the widgets.' });
+                return;
+            }
+            setWidgetToken(null);
+            setWidgetCopied(false);
+            rememberWidget(false, null);
+        } catch {
+            setMessage({ type: 'error', text: 'Could not disconnect the widgets.' });
+        } finally {
+            setWidgetBusy(false);
         }
     };
 
@@ -415,6 +490,58 @@ export default function SettingsPage() {
                                             </LiquidButton>
                                         ) : null}
                                     </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section className="space-y-4">
+                            <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-4">
+                                <div>
+                                    <h2 className="text-xl font-semibold text-white">Android and Mac widgets</h2>
+                                    <p className="mt-2 text-sm text-zinc-400">
+                                        Create a key while you are signed in, then paste the same key into the Android widget and the Mac app.
+                                        Both widgets then show the live score and the running task from this account.
+                                        Creating a new key stops the old one. The full key is shown only once.
+                                    </p>
+                                </div>
+                                {widgetToken ? (
+                                    <div className="space-y-3">
+                                        <code className="block overflow-x-auto rounded-xl bg-black px-3 py-3 font-mono text-sm text-emerald-300">
+                                            {widgetToken}
+                                        </code>
+                                        <LiquidButton
+                                            onClick={handleCopyWidgetKey}
+                                            className="px-6 py-2 text-white"
+                                        >
+                                            {widgetCopied ? 'Copied' : 'Copy key'}
+                                        </LiquidButton>
+                                    </div>
+                                ) : widgetConnected ? (
+                                    <p className="text-sm text-zinc-300">
+                                        A key is already connected{widgetTokenPrefix ? ` (${widgetTokenPrefix})` : ''}.
+                                    </p>
+                                ) : (
+                                    <p className="text-sm text-zinc-400">No widget key yet.</p>
+                                )}
+                                <div className="flex flex-wrap gap-2">
+                                    <LiquidButton
+                                        onClick={handleCreateWidgetKey}
+                                        disabled={widgetBusy}
+                                        className="px-6 py-2 text-white"
+                                        variant="outline"
+                                    >
+                                        {widgetBusy ? 'Working...' : widgetConnected ? 'Create a new key' : 'Create key'}
+                                    </LiquidButton>
+                                    {widgetConnected ? (
+                                        <button
+                                            type="button"
+                                            onClick={handleDisconnectWidget}
+                                            disabled={widgetBusy}
+                                            className="px-4 py-2 text-red-500 hover:text-red-400 text-sm font-medium transition-colors border border-red-500/20 rounded-xl hover:bg-red-500/10 disabled:opacity-50"
+                                        >
+                                            Disconnect
+                                        </button>
+                                    ) : null}
                                 </div>
                             </div>
                         </section>
