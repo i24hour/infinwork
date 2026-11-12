@@ -1,0 +1,13 @@
+Step-by-step working
+
+When a person tells the whole procedure, or the whole kind of work they are going to do, the system makes the steps. They follow those steps and reach the target.
+
+How it works
+1. The person describes the work in their own words. That can be the full procedure, or just the kind of work and the target.
+2. The system turns that description into an ordered list of steps.
+   - A procedure becomes the steps they already described, in an order they can follow.
+   - A kind of work becomes a path: name the target, write the finish line, do the work, check the result, and mark the target complete.
+3. One step stays in front of them. Marking it done opens the next step.
+4. When every step is done, the target is complete.
+
+The first version is on the site at /steps. A plan stays in the browser, so the person can leave and come back to the same step.

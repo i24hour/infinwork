@@ -13,6 +13,13 @@ const ITEMS = [
         ),
     },
     {
+        href: '/steps',
+        label: 'Steps',
+        icon: (
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 5h10M9 12h10M9 19h10M5 5h.01M5 12h.01M5 19h.01" />
+        ),
+    },
+    {
         href: '/itime',
         label: 'iTime',
         icon: (

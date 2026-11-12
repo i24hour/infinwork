@@ -17,6 +17,7 @@ import {
 
 const navItems: Array<{ href: string; label: string; prefetchEndpoints?: string[] }> = [
     { href: '/workbench', label: 'Workbench', prefetchEndpoints: [] },
+    { href: '/steps', label: 'Step-by-step', prefetchEndpoints: [] },
     { href: '/profile', label: 'Profile', prefetchEndpoints: ['/api/profile'] },
     { href: '/itime', label: 'iTime', prefetchEndpoints: ['/api/itime', '/api/user/settings'] },
     { href: '/workers', label: 'WOrKers', prefetchEndpoints: ['/api/workers'] },
