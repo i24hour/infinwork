@@ -5,6 +5,7 @@ import Chain from '@/models/IChain';
 import User from '@/models/User';
 import { ensureUserHasDefaultUsername } from '@/lib/username';
 import { normalizeImageDataUrl } from '@/lib/validate';
+import { shrinkAvatarDataUrl } from '@/lib/avatar-resize';
 
 export async function POST(request: NextRequest) {
     try {
@@ -24,6 +25,15 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: imageError || 'Invalid image' }, { status: 400 });
         }
 
+        // Store a small 256px WebP instead of the original upload. Keeps the
+        // User document (and every response built from it) tiny.
+        let storedImage: string;
+        try {
+            storedImage = await shrinkAvatarDataUrl(normalizedImage);
+        } catch {
+            return NextResponse.json({ error: 'Could not read that image' }, { status: 400 });
+        }
+
         await connectDB();
 
         const userEmail = email;
@@ -33,7 +43,7 @@ export async function POST(request: NextRequest) {
         // Update or Create User document
         await User.findOneAndUpdate(
             { email: userEmail },
-            { $set: { image: normalizedImage } },
+            { $set: { image: storedImage } },
             { upsert: true }
         );
 
@@ -41,7 +51,7 @@ export async function POST(request: NextRequest) {
         // MongoDB updateMany with array filters is powerful for this
         await Chain.updateMany(
             { 'members.userId': userEmail },
-            { $set: { 'members.$[elem].image': normalizedImage } },
+            { $set: { 'members.$[elem].image': storedImage } },
             { arrayFilters: [{ 'elem.userId': userEmail }] }
         );
 
@@ -49,7 +59,7 @@ export async function POST(request: NextRequest) {
         // if we ever use that as a source of truth for user info.
         // But for now, updating all chains is the most direct way to satisfy the requirement.
 
-        return NextResponse.json({ success: true, image: normalizedImage });
+        return NextResponse.json({ success: true, image: storedImage });
     } catch (error) {
         console.error('Error updating profile image:', error);
         return NextResponse.json({ error: 'Failed to update profile image' }, { status: 500 });
