@@ -7,7 +7,7 @@ import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import { useToast } from '@/components/ui/toast';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } from '@/lib/score';
-import { PerformanceChart } from '@/components/PerformanceChart';
+import { PerformanceChart } from '@/components/LazyPerformanceChart';
 import { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
 import { LiveTimer, LivePauseCountdown } from '@/components/LiveTimer';
 import {

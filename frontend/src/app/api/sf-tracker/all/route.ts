@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 import SFTracker from '@/models/SFTracker';
-import User from '@/models/User';
+import { findUsersWithAvatar } from '@/lib/avatar';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,9 +15,7 @@ export async function GET() {
         const allTargets = await SFTracker.find().lean() as any[];
         const targetUserIds = [...new Set(allTargets.map((target) => target.userId).filter(Boolean))];
 
-        const allUsers = await User.find({ email: { $in: targetUserIds } })
-            .select('email username image')
-            .lean() as any[];
+        const allUsers = await findUsersWithAvatar({ email: { $in: targetUserIds } }, ['email', 'username']);
 
         const emailToUserMap = new Map<string, { publicId: string; username: string; image: string | null }>();
         allUsers.forEach((user) => {

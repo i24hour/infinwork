@@ -4,6 +4,7 @@ import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
 import Chain from '@/models/IChain';
 import User from '@/models/User';
+import { findUsersWithAvatar, isDataImage } from '@/lib/avatar';
 import { enforceChainVisitWindow } from '@/lib/ichain';
 import { recomputeChainPointsForUsers } from '@/lib/chain-points';
 import { isAllowedExternalLink, isPlainObject, readJsonBody } from '@/lib/validate';
@@ -62,6 +63,22 @@ export async function GET(request: NextRequest) {
 
         // Re-sort in memory because live updates might change the order
         chains.sort((a: any, b: any) => (b.maxTime || 0) - (a.maxTime || 0));
+
+        // Member avatars are stored as base64 inside every chain (megabytes in
+        // total). Send small cacheable URLs instead of the image bytes.
+        const memberEmails = [...new Set(
+            chains.flatMap((chain: any) => (chain.members || []).map((member: any) => member.userId))
+        )].filter(Boolean);
+        const avatarUsers = memberEmails.length
+            ? await findUsersWithAvatar({ email: { $in: memberEmails } }, ['email'])
+            : [];
+        const avatarByEmail = new Map<string, string | null>(avatarUsers.map((u) => [u.email, u.image]));
+        for (const chain of chains) {
+            chain.members = (chain.members || []).map((member: any) => ({
+                ...member,
+                image: avatarByEmail.get(member.userId) ?? (isDataImage(member.image) ? null : member.image),
+            }));
+        }
 
         return NextResponse.json({ chains });
     } catch (error) {

@@ -8,8 +8,25 @@ import {
 
 export const dynamic = 'force-dynamic';
 
+// The leaderboard only changes when the scrape cron runs, so a short server
+// cache plus CDN caching removes five DB round trips from almost every request.
+const CACHE_TTL_MS = 30_000;
+const CACHE_MAX_ENTRIES = 60;
+const CDN_CACHE_CONTROL = 'public, max-age=0, s-maxage=60, stale-while-revalidate=300';
+const responseCache = new Map<string, { body: unknown; expiresAt: number }>();
+
+function cachedJson(body: unknown) {
+    return NextResponse.json(body, { headers: { 'Cache-Control': CDN_CACHE_CONTROL } });
+}
+
 export async function GET(request: NextRequest) {
     try {
+        const cacheKey = new URL(request.url).search;
+        const hit = responseCache.get(cacheKey);
+        if (hit && hit.expiresAt > Date.now()) {
+            return cachedJson(hit.body);
+        }
+
         await connectDB();
 
         const { searchParams } = new URL(request.url);
@@ -54,14 +71,15 @@ export async function GET(request: NextRequest) {
             ];
         }
 
-        const politicians = await Politician.find(filter).lean();
+        const [politicians, parties, states, allActive] = await Promise.all([
+            Politician.find(filter).lean(),
+            Politician.distinct('party', { isActive: true }),
+            Politician.distinct('state', { isActive: true }),
+            Politician.find({ isActive: true })
+                .select('level xHandle lastScrapeStatus stats.netScore stats.postCount stats.onPortfolioPct')
+                .lean(),
+        ]);
         const sorted = sortPoliticiansForLeaderboard(politicians as any[], sortBy);
-
-        const parties = await Politician.distinct('party', { isActive: true });
-        const states = await Politician.distinct('state', { isActive: true });
-        const allActive = await Politician.find({ isActive: true })
-            .select('level xHandle lastScrapeStatus stats.netScore stats.postCount stats.onPortfolioPct')
-            .lean();
 
         // Rank globally, before party/search/status filters, so a search result
         // shows the politician's real position instead of "#1" in its own slice.
@@ -101,7 +119,7 @@ export async function GET(request: NextRequest) {
                   ) / 10
                 : 0;
 
-        return NextResponse.json({
+        const body = {
             politicians: sorted.map((p: any) => ({
                 id: String(p._id),
                 name: p.name,
@@ -146,7 +164,11 @@ export async function GET(request: NextRequest) {
                 avgOnPortfolioPct,
                 windowDays: RANK_POLITICIAN_SCORE_WINDOW_DAYS,
             },
-        });
+        };
+
+        if (responseCache.size >= CACHE_MAX_ENTRIES) responseCache.clear();
+        responseCache.set(cacheKey, { body, expiresAt: Date.now() + CACHE_TTL_MS });
+        return cachedJson(body);
     } catch (error: any) {
         console.error('Error fetching rank-politician leaderboard:', error);
         return NextResponse.json(

@@ -5,6 +5,7 @@ import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
 import ITimeTask from '@/models/ITimeTask';
 import User from '@/models/User';
+import { findUsersWithAvatar } from '@/lib/avatar';
 import { syncGithubForUserByEmail } from '@/lib/github-sync';
 import { autoCancelExpiredActiveTasks } from '@/lib/itime-runtime';
 
@@ -55,9 +56,7 @@ export async function GET() {
             ITimeTask.find({ isPublic: { $ne: false } })
                 .select('userId startTime pausedElapsed enabled completed completedAt cancelledAt events updatedAt isPublic')
                 .lean() as Promise<any[]>,
-            User.find({})
-                .select('email username image points githubPointsLastUpdatedAt githubConnectedAt githubPointsHistory chainPoints chainPointsHistory')
-                .lean() as Promise<any[]>,
+            findUsersWithAvatar({}, ['email', 'username', 'points', 'githubPointsLastUpdatedAt', 'githubConnectedAt', 'githubPointsHistory', 'chainPoints', 'chainPointsHistory']),
         ]);
 
         const allUsers = initialUsers;
@@ -83,9 +82,7 @@ export async function GET() {
                     })),
                     { ordered: false }
                 );
-                const createdUsers = await User.find({ email: { $in: missingEmails } })
-                    .select('email username image')
-                    .lean();
+                const createdUsers = await findUsersWithAvatar({ email: { $in: missingEmails } }, ['email', 'username']);
                 allUsers.push(...createdUsers);
             } catch (e) {
                 console.error('Error lazy-registering users in bulk:', e);

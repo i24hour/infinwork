@@ -42,6 +42,7 @@ export async function GET(
                 { postedAt: null, createdAt: { $gte: windowStart } },
             ],
         })
+            .select('-rawMarkdown')
             .sort({ postedAt: -1, createdAt: -1 })
             .limit(100)
             .lean();
@@ -88,7 +89,7 @@ export async function GET(
                 scoredBy: post.scoredBy || null,
                 scoredAt: post.scoredAt || null,
             })),
-        });
+        }, { headers: { 'Cache-Control': 'public, max-age=0, s-maxage=60, stale-while-revalidate=300' } });
     } catch (error: any) {
         console.error('Error fetching politician detail:', error);
         return NextResponse.json(

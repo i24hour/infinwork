@@ -31,7 +31,7 @@ export default async function ProfileOpengraphImage({
     try {
         await connectDB();
         user = await User.findOne({ username: username.toLowerCase() })
-            .select('username headline bio image projects points chainPoints githubUsername githubCommitsTotal')
+            .select('username headline bio projects points chainPoints githubUsername githubCommitsTotal')
             .lean() as OgUser | null;
     } catch {
         user = null;

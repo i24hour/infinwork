@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 import SFTracker from '@/models/SFTracker';
-import User from '@/models/User';
+import { findOneUserWithAvatar, toObjectId } from '@/lib/avatar';
 import { isValidObjectIdString } from '@/lib/validate';
 
 export const dynamic = 'force-dynamic';
@@ -26,11 +26,12 @@ export async function GET(
             { username: { $regex: `^${escapeRegex(identifier)}$`, $options: 'i' } },
             { email: { $regex: `^${escapeRegex(identifier)}$`, $options: 'i' } },
         ];
-        if (isValidObjectIdString(identifier)) {
-            lookup.push({ _id: identifier });
+        const identifierObjectId = isValidObjectIdString(identifier) ? toObjectId(identifier) : null;
+        if (identifierObjectId) {
+            lookup.push({ _id: identifierObjectId });
         }
 
-        const profile = await User.findOne({ $or: lookup }).lean() as any;
+        const profile = await findOneUserWithAvatar({ $or: lookup });
         if (!profile?.email) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }

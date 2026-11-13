@@ -6,6 +6,7 @@ import Chain from '@/models/IChain';
 import User from '@/models/User';
 import { enforceChainVisitWindow } from '@/lib/ichain';
 import { recomputeChainPointsForUsers } from '@/lib/chain-points';
+import { findUsersWithAvatar, isDataImage } from '@/lib/avatar';
 import {
     isPlainObject,
     isValidObjectIdString,
@@ -96,7 +97,7 @@ export async function GET(
 
         // Fetch latest user info (username, image) for all members
         const memberEmails = chain.members.map((m: any) => m.userId);
-        const users = await User.find({ email: { $in: memberEmails } }).lean() as any[];
+        const users = await findUsersWithAvatar({ email: { $in: memberEmails } }, ['email', 'username']);
         const emailToUserMap = new Map();
         users.forEach(u => emailToUserMap.set(u.email, u));
 
@@ -111,7 +112,7 @@ export async function GET(
             const user = emailToUserMap.get(member.userId);
             if (user) {
                 member.name = user.username || member.name;
-                member.image = user.image || member.image;
+                member.image = user.image || (isDataImage(member.image) ? null : member.image);
             }
 
             if (member.isWorking && member.lastStartedAt) {

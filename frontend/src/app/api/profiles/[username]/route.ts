@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
-import User from '@/models/User';
+import { findOneUserWithAvatar } from '@/lib/avatar';
 import { serializePublicProfile } from '@/lib/profile-utils';
 
 export async function GET(
@@ -11,7 +11,7 @@ export async function GET(
         const { username } = await params;
         await connectDB();
 
-        const user = await User.findOne({ username: username.toLowerCase() }).lean();
+        const user = await findOneUserWithAvatar({ username: username.toLowerCase() });
         if (!user) {
             return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
         }

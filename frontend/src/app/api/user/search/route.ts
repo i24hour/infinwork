@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 import { getAuthorizedEmail } from '@/lib/mobile-auth';
-import User from '@/models/User';
+import { findUsersWithAvatar } from '@/lib/avatar';
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -26,10 +26,7 @@ export async function GET(request: NextRequest) {
 
         // Search by username only. Matching partial emails let any signed-in
         // user enumerate the entire account list.
-        const users = await User.find({ username: searchRegex })
-        .select('username image')
-        .limit(10)
-        .lean() as any[];
+        const users = await findUsersWithAvatar({ username: searchRegex }, ['username'], { limit: 10 });
 
         const formattedUsers = users.map(user => ({
             username: user.username,

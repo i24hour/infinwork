@@ -5,7 +5,7 @@ import { Sidebar } from '@/components/Sidebar';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import { LiveTimer } from '@/components/LiveTimer';
 import { getScoreAtTime, type GithubPointsSnapshot, type ChainPointsSnapshot } from '@/lib/score';
-import { PerformanceChart } from '@/components/PerformanceChart';
+import { PerformanceChart } from '@/components/LazyPerformanceChart';
 import { useRouter } from 'next/navigation';
 import { fetchWithCache, getCachedData } from '@/lib/client-cache';
 

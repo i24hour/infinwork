@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import connectDB from '@/lib/mongodb';
 import ITimeTask from '@/models/ITimeTask';
-import User from '@/models/User';
+import { findOneUserWithAvatar, toObjectId } from '@/lib/avatar';
 import { autoCancelExpiredActiveTasks } from '@/lib/itime-runtime';
 import { recomputeChainPointsForUsers } from '@/lib/chain-points';
 import { isValidObjectIdString } from '@/lib/validate';
@@ -34,11 +34,12 @@ export async function GET(
             { username: { $regex: `^${escapeRegex(identifier)}$`, $options: 'i' } },
             { email: { $regex: `^${escapeRegex(identifier)}$`, $options: 'i' } },
         ];
-        if (isValidObjectIdString(identifier)) {
-            lookup.push({ _id: identifier });
+        const identifierObjectId = isValidObjectIdString(identifier) ? toObjectId(identifier) : null;
+        if (identifierObjectId) {
+            lookup.push({ _id: identifierObjectId });
         }
 
-        const user = await User.findOne({ $or: lookup }).lean() as any;
+        const user = await findOneUserWithAvatar({ $or: lookup });
         if (!user?.email) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 import { getAuthorizedEmail } from '@/lib/mobile-auth';
-import User from '@/models/User';
+import { findOneUserWithAvatar } from '@/lib/avatar';
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -22,12 +22,12 @@ export async function GET(request: NextRequest) {
 
         await connectDB();
 
-        const user = await User.findOne({
+        const user = await findOneUserWithAvatar({
             $or: [
                 { email: identifier },
                 { username: { $regex: `^${escapeRegex(identifier)}$`, $options: 'i' } }
             ]
-        }).lean() as any;
+        }, ['username']);
 
         return NextResponse.json({
             exists: !!user,

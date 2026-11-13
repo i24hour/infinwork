@@ -1,4 +1,5 @@
 import type { IUser, IUserProject } from '@/models/User';
+import { resolveAvatar } from '@/lib/avatar-url';
 import type { ProfileProject, PublicProfile } from '@/types/profile';
 
 export function serializeProject(project: IUserProject): ProfileProject {
@@ -23,7 +24,7 @@ export function serializePublicProfile(
 
     return {
         username: user.username,
-        image: user.image,
+        image: resolveAvatar(user as Parameters<typeof resolveAvatar>[0]) ?? undefined,
         headline: user.headline || '',
         bio: user.bio || '',
         // Hiding contributions should also hide the GitHub account from

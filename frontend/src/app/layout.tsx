@@ -6,8 +6,7 @@ import { AuthProvider } from "@/components/AuthProvider";
 import { PwaRegister } from "@/components/PwaRegister";
 import { ToastProvider } from "@/components/ui/toast";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
-import { CommandPalette } from "@/components/CommandPalette";
-import { InstallPrompt } from "@/components/InstallPrompt";
+import { LazyGlobals } from "@/components/LazyGlobals";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -121,8 +120,7 @@ export default function RootLayout({
           <ToastProvider>
             <ConfirmProvider>
               {children}
-              <CommandPalette />
-              <InstallPrompt />
+              <LazyGlobals />
             </ConfirmProvider>
           </ToastProvider>
         </AuthProvider>
