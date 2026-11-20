@@ -5,7 +5,7 @@ import { Sidebar } from '@/components/Sidebar';
 import { LiquidButton } from '@/components/ui/liquid-glass-button';
 import { useSession, signIn } from 'next-auth/react';
 import { motion } from 'framer-motion';
-import { fetchWithCache, getCachedData, setCachedData } from '@/lib/client-cache';
+import { fetchWithCache, getCachedData, invalidateCache, setCachedData } from '@/lib/client-cache';
 
 interface SettingsResponse {
     username?: string;
@@ -23,6 +23,7 @@ interface SettingsResponse {
     lastGithubSyncAt?: string | null;
     widgetConnected?: boolean;
     widgetTokenPrefix?: string | null;
+    allTasksHidden?: boolean;
 }
 
 export default function SettingsPage() {
@@ -50,6 +51,8 @@ export default function SettingsPage() {
     const [widgetToken, setWidgetToken] = useState<string | null>(null);
     const [widgetBusy, setWidgetBusy] = useState(false);
     const [widgetCopied, setWidgetCopied] = useState(false);
+    const [allTasksHidden, setAllTasksHidden] = useState<boolean>(() => Boolean(initialCached?.allTasksHidden));
+    const [tasksVisibilityBusy, setTasksVisibilityBusy] = useState(false);
     const [isRulesOpen, setIsRulesOpen] = useState(false);
 
     useEffect(() => {
@@ -106,6 +109,7 @@ export default function SettingsPage() {
             setGithubOAuthConfigured(data.githubOAuthConfigured !== false);
             setWidgetConnected(Boolean(data.widgetConnected));
             setWidgetTokenPrefix(data.widgetTokenPrefix || null);
+            setAllTasksHidden(Boolean(data.allTasksHidden));
         } catch (err) {
             console.error('Error fetching settings:', err);
         } finally {
@@ -128,6 +132,7 @@ export default function SettingsPage() {
             setWidgetConnected(false);
             setWidgetTokenPrefix(null);
             setWidgetToken(null);
+            setAllTasksHidden(false);
             setLoading(false);
             return;
         }
@@ -321,6 +326,46 @@ export default function SettingsPage() {
         }
     };
 
+    const handleTaskVisibility = async () => {
+        if (!session) {
+            setMessage({ type: 'error', text: 'Sign in to hide or show your tasks.' });
+            return;
+        }
+        const hidden = !allTasksHidden;
+        setTasksVisibilityBusy(true);
+        setMessage({ type: '', text: '' });
+        try {
+            const res = await fetch('/api/itime/visibility', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hidden }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                setMessage({ type: 'error', text: data.error || 'Could not update your tasks.' });
+                return;
+            }
+            const nextHidden = Boolean(data.allTasksHidden);
+            setAllTasksHidden(nextHidden);
+            const cached = getCachedData<SettingsResponse>('/api/user/settings');
+            if (cached) {
+                setCachedData('/api/user/settings', { ...cached, allTasksHidden: nextHidden });
+            }
+            invalidateCache('/api/itime');
+            invalidateCache('/api/workers');
+            setMessage({
+                type: 'success',
+                text: nextHidden
+                    ? 'All tasks are hidden. You still see them on iTime.'
+                    : 'All tasks are visible again.',
+            });
+        } catch {
+            setMessage({ type: 'error', text: 'Could not update your tasks.' });
+        } finally {
+            setTasksVisibilityBusy(false);
+        }
+    };
+
     const totalScoreAccentClass = totalScore < 0
         ? 'from-red-400 to-orange-400'
         : 'from-blue-400 to-emerald-400';
@@ -491,6 +536,26 @@ export default function SettingsPage() {
                                         ) : null}
                                     </div>
                                 </div>
+                            </div>
+                        </section>
+
+                        <section className="space-y-4">
+                            <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-4">
+                                <div>
+                                    <h2 className="text-xl font-semibold text-white">Tasks</h2>
+                                    <p className="mt-2 text-sm text-zinc-400">
+                                        Hide every task other people can see. Active, completed, and closed tasks are included.
+                                        You still see them on iTime. Show all tasks puts them back.
+                                    </p>
+                                </div>
+                                <LiquidButton
+                                    onClick={handleTaskVisibility}
+                                    disabled={tasksVisibilityBusy}
+                                    className="px-6 py-2 text-white"
+                                    variant="outline"
+                                >
+                                    {tasksVisibilityBusy ? 'Working...' : allTasksHidden ? 'Show all tasks' : 'Hide all tasks'}
+                                </LiquidButton>
                             </div>
                         </section>
 

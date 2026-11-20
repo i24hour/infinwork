@@ -375,6 +375,7 @@ export default function ITimePage() {
         githubPointsHistory?: GithubPointsSnapshot[] | null;
         chainPoints?: number;
         chainPointsHistory?: ChainPointsSnapshot[] | null;
+        allTasksHidden?: boolean;
     }>('/api/user/settings');
 
     const [tasks, setTasks] = useState<ITimeTask[]>(() =>
@@ -395,6 +396,8 @@ export default function ITimePage() {
     const [completedTasksPage, setCompletedTasksPage] = useState(1);
     const [isLightTheme, setIsLightTheme] = useState<boolean>(() => getInitialIsLightTheme());
     const [saveError, setSaveError] = useState<string | null>(null);
+    const [tasksHiddenPreference, setTasksHiddenPreference] = useState<boolean>(() => Boolean(initialSettingsCache?.allTasksHidden));
+    const [tasksVisibilityBusy, setTasksVisibilityBusy] = useState(false);
 
     useEffect(() => {
         const root = document.documentElement;
@@ -520,6 +523,7 @@ export default function ITimePage() {
                 githubPointsHistory?: GithubPointsSnapshot[] | null;
                 chainPoints?: number;
                 chainPointsHistory?: ChainPointsSnapshot[] | null;
+                allTasksHidden?: boolean;
             }>('/api/user/settings', { dedupingIntervalMs: 5000 });
             if (data.username) {
                 setUserProfile(prev => ({ ...prev, username: data.username }));
@@ -531,6 +535,7 @@ export default function ITimePage() {
             setGithubPointsHistory(Array.isArray(data.githubPointsHistory) ? data.githubPointsHistory : null);
             setChainPoints(data.chainPoints || 0);
             setChainPointsHistory(Array.isArray(data.chainPointsHistory) ? data.chainPointsHistory : null);
+            setTasksHiddenPreference(Boolean(data.allTasksHidden));
         } catch (err) {
             console.error('Error fetching profile:', err);
         } finally {
@@ -652,7 +657,7 @@ export default function ITimePage() {
             pausedElapsed: 0,
             enabled: true,
             completed: false,
-            isPublic: true,
+            isPublic: status === 'authenticated' && tasksHiddenPreference ? false : true,
             ...(targetTime ? { targetTime } : {}),
             milestones: [],
             events: [{ type: 'start', timestamp: now }],
@@ -946,6 +951,41 @@ export default function ITimePage() {
         }
     };
 
+    const setAllTasksVisibility = async (hidden: boolean) => {
+        if (status !== 'authenticated' || tasksVisibilityBusy) return;
+        setTasksVisibilityBusy(true);
+        setTasksHiddenPreference(hidden);
+        setTasks((prev) => prev.map((task) => ({ ...task, isPublic: !hidden })));
+        try {
+            const response = await fetch('/api/itime/visibility', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hidden }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(typeof payload?.error === 'string' ? payload.error : 'Could not update tasks');
+            }
+            invalidateCache('/api/workers');
+            invalidateCache('/api/user/settings');
+            toast({
+                variant: 'info',
+                title: hidden ? 'All tasks are hidden' : 'All tasks are visible',
+                description: hidden
+                    ? 'Active, completed, and closed tasks are hidden from other people.'
+                    : 'Other people can see your tasks again.',
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Could not update tasks';
+            toast({ variant: 'error', title: 'Could not update tasks', description: message });
+            invalidateCache('/api/itime');
+            fetchTasks();
+            fetchUserProfile();
+        } finally {
+            setTasksVisibilityBusy(false);
+        }
+    };
+
     const setTargetTime = async (taskId: string) => {
         const hours = parseInt(targetHours) || 0;
         const minutes = parseInt(targetMinutes) || 0;
@@ -1104,6 +1144,24 @@ export default function ITimePage() {
                             <p className="text-gray-400">
                                 Track your tasks and manage your time effectively
                             </p>
+                            {session ? (
+                                <button
+                                    type="button"
+                                    onClick={() => setAllTasksVisibility(!(tasks.length > 0
+                                        ? tasks.every((task) => task.isPublic === false)
+                                        : tasksHiddenPreference))}
+                                    disabled={tasksVisibilityBusy}
+                                    className="mt-4 rounded-full border border-white/15 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 disabled:opacity-50"
+                                >
+                                    {tasksVisibilityBusy
+                                        ? 'Working...'
+                                        : (tasks.length > 0
+                                            ? tasks.every((task) => task.isPublic === false)
+                                            : tasksHiddenPreference)
+                                            ? 'Show all tasks'
+                                            : 'Hide all tasks'}
+                                </button>
+                            ) : null}
                         </div>
 
                         <div className="order-1 md:order-2 self-start md:self-auto w-full md:w-auto flex justify-end md:block">

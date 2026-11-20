@@ -50,6 +50,8 @@ export interface IUser {
     /** First characters of the key, safe to show in Settings. */
     widgetTokenPrefix?: string;
     widgetTokenCreatedAt?: Date;
+    /** When true, new tasks stay hidden until the person shows all tasks. */
+    tasksHidden?: boolean;
     createdAt?: Date;
     updatedAt?: Date;
 }
@@ -181,6 +183,10 @@ const UserSchema = new mongoose.Schema<IUser>({
     },
     widgetTokenCreatedAt: {
         type: Date,
+    },
+    tasksHidden: {
+        type: Boolean,
+        default: false,
     },
 }, {
     timestamps: true,

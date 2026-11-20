@@ -35,6 +35,7 @@
     "src/lib/rank-politician/score.keyword.test.ts",
     "src/lib/itime.test.ts",
     "src/lib/widget-snapshot.test.ts",
-    "src/lib/steps/compile.test.ts"
+    "src/lib/steps/compile.test.ts",
+    "src/lib/task-visibility.test.ts"
   ]
 }

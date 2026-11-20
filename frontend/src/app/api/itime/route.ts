@@ -69,6 +69,11 @@ export async function POST(request: NextRequest) {
 
         await connectDB();
 
+        const owner = await User.findOne({ email: { $in: [email.trim(), email.trim().toLowerCase()] } })
+            .select('tasksHidden')
+            .lean();
+        const tasksHidden = Boolean(owner?.tasksHidden);
+
         const task = await ITimeTask.create({
             ...sanitized.value,
             userId: email,
@@ -77,6 +82,7 @@ export async function POST(request: NextRequest) {
             enabled: sanitized.value.enabled ?? true,
             completed: sanitized.value.completed ?? false,
             description: sanitized.value.description ?? '',
+            isPublic: tasksHidden ? false : sanitized.value.isPublic !== false,
         });
 
         return NextResponse.json({ task }, { status: 201 });

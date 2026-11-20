@@ -8,6 +8,7 @@ import { syncGithubForUserByEmail } from '@/lib/github-sync';
 import { getScoreBreakdownAtTime } from '@/lib/score';
 import { recomputeChainPointsForUsers } from '@/lib/chain-points';
 import { isGithubOAuthConfigured } from '@/lib/auth-env';
+import { allTasksAreHidden } from '@/lib/task-visibility';
 
 export async function GET(request: NextRequest) {
     try {
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest) {
         const [existingUser, tasks] = await Promise.all([
             User.findOne({ email: email.trim().toLowerCase() }).lean(),
             ITimeTask.find({ userId: email })
-                .select('startTime pausedElapsed enabled completed completedAt events')
+                .select('startTime pausedElapsed enabled completed completedAt events isPublic')
                 .lean(),
         ]);
 
@@ -67,6 +68,7 @@ export async function GET(request: NextRequest) {
             chainPointsHistory: user?.chainPointsHistory || [],
             widgetConnected: Boolean(user?.widgetTokenHash),
             widgetTokenPrefix: user?.widgetTokenPrefix || null,
+            allTasksHidden: allTasksAreHidden(tasks, Boolean(user?.tasksHidden)),
         });
     } catch (error) {
         console.error('Error fetching settings:', error);
